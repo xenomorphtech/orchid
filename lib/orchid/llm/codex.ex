@@ -37,10 +37,13 @@ defmodule Orchid.LLM.Codex do
 
     case Task.yield(task, timeout) || Task.shutdown(task) do
       {:ok, ""} ->
+        Orchid.OpenAIUsage.refresh_async()
         Logger.error("Codex returned empty response")
         {:error, "Codex returned empty response"}
 
       {:ok, content} ->
+        Orchid.OpenAIUsage.refresh_async()
+
         if String.starts_with?(content, "Error:") or String.starts_with?(content, "error:") do
           Logger.error("Codex error: #{String.slice(content, 0, 500)}")
           {:error, {:api_error, content}}
@@ -49,6 +52,7 @@ defmodule Orchid.LLM.Codex do
         end
 
       nil ->
+        Orchid.OpenAIUsage.refresh_async()
         Logger.error("Codex timeout after #{div(timeout, 1000)}s")
         {:error, :timeout}
     end
@@ -197,7 +201,19 @@ defmodule Orchid.LLM.Codex do
       model when is_binary(model) -> args ++ ["-m", model]
     end
 
-    # Working directory — point at project files
+    args =
+      case config[:reasoning_effort] do
+        effort when effort in [:low, :medium, :high, :xhigh] ->
+          args ++ ["-c", "model_reasoning_effort=\"#{effort}\""]
+
+        effort when effort in ["low", "medium", "high", "xhigh"] ->
+          args ++ ["-c", "model_reasoning_effort=\"#{effort}\""]
+
+        _ ->
+          args
+      end
+
+    # Working directory - point at project files
     args = case config[:project_id] do
       nil -> args
       project_id ->

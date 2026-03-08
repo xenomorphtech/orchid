@@ -21,6 +21,8 @@ defmodule Orchid.Application do
       Orchid.McpEvents,
       # PubSub for Phoenix
       {Phoenix.PubSub, name: Orchid.PubSub},
+      # Shared OpenAI/Codex subscription usage tracker
+      Orchid.OpenAIUsage,
       # Phoenix endpoint
       OrchidWeb.Endpoint,
       # Auto-spawn agents for projects with unattended goals

@@ -123,7 +123,11 @@ defmodule Orchid.LLM.Aletheia do
   end
 
   defp do_llm_text(prompt, llm_config, retried?) when is_binary(prompt) do
-    config = Map.merge(@default_config, Map.take(llm_config || %{}, [:provider, :model]))
+    config =
+      Map.merge(
+        @default_config,
+        Map.take(llm_config || %{}, [:provider, :model, :reasoning_effort])
+      )
 
     context = %{
       system: "",

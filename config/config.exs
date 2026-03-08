@@ -1,21 +1,14 @@
 import Config
 
 config :orchid, OrchidWeb.Endpoint,
-  url: [host: "orch.run", scheme: "https", port: 443],
+  url: [host: "localhost", scheme: "http", port: 4080],
   adapter: Bandit.PhoenixAdapter,
   http: [port: 4080],
-  https: [
-    port: 4000,
-    cipher_suite: :strong,
-    certfile: "/etc/letsencrypt/live/orch.run/fullchain.pem",
-    keyfile: "/etc/letsencrypt/live/orch.run/privkey.pem"
-  ],
   secret_key_base: "orchid_secret_key_base_that_is_at_least_64_bytes_long_for_security",
   live_view: [signing_salt: "orchid_live_view_salt"],
   render_errors: [formats: [html: OrchidWeb.ErrorHTML], layout: false],
   pubsub_server: Orchid.PubSub,
-  server: true,
-  force_ssl: [rewrite_on: [:x_forwarded_proto], hsts: true, log: false]
+  server: true
 
 config :phoenix, :json_library, Jason
 

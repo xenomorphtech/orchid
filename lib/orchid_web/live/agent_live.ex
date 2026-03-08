@@ -38,6 +38,7 @@ defmodule OrchidWeb.AgentLive do
       |> assign(:decomp_num_paths, 3)
       |> assign(:decomp_max_iterations, 3)
       |> assign(:decomp_model, :sonnet)
+      |> assign(:decomp_reasoning_effort, :medium)
       |> assign(:decomp_running, false)
       |> assign(:decomp_result, nil)
       |> assign(:decomp_error, nil)
@@ -632,13 +633,28 @@ defmodule OrchidWeb.AgentLive do
   end
 
   def handle_event("update_decomp_model", %{"model" => model}, socket) do
-    {:noreply, assign(socket, :decomp_model, parse_decomp_model(model))}
+    model = parse_decomp_model(model)
+
+    socket =
+      socket
+      |> assign(:decomp_model, model)
+      |> maybe_reset_decomp_reasoning_effort(model)
+
+    {:noreply, socket}
+  end
+
+  def handle_event("update_decomp_reasoning_effort", %{"reasoning_effort" => effort}, socket) do
+    {:noreply, assign(socket, :decomp_reasoning_effort, parse_decomp_reasoning_effort(effort))}
   end
 
   def handle_event("run_decomposition_test", params, socket) do
     project_id = socket.assigns.current_project
     objective = String.trim(params["goal"] || socket.assigns.decomp_goal_text || "")
     model = parse_decomp_model(params["model"] || Atom.to_string(socket.assigns.decomp_model))
+    reasoning_effort =
+      parse_decomp_reasoning_effort(
+        params["reasoning_effort"] || Atom.to_string(socket.assigns.decomp_reasoning_effort)
+      )
     num_paths = clamp_int(params["num_paths"], socket.assigns.decomp_num_paths, 1, 8)
     max_iterations = clamp_int(params["max_iterations"], socket.assigns.decomp_max_iterations, 0, 6)
 
@@ -660,6 +676,7 @@ defmodule OrchidWeb.AgentLive do
           socket
           |> assign(:decomp_goal_text, objective)
           |> assign(:decomp_model, model)
+          |> assign(:decomp_reasoning_effort, reasoning_effort)
           |> assign(:decomp_num_paths, num_paths)
           |> assign(:decomp_max_iterations, max_iterations)
           |> assign(:decomp_running, true)
@@ -667,7 +684,7 @@ defmodule OrchidWeb.AgentLive do
           |> assign(:decomp_result, nil)
 
         Task.start(fn ->
-          llm_config = decomp_llm_config(model)
+          llm_config = decomp_llm_config(model, reasoning_effort)
 
           raw_output =
             case Orchid.LLM.Aletheia.generate_paths(objective, num_paths, llm_config) do
@@ -693,7 +710,11 @@ defmodule OrchidWeb.AgentLive do
             end
 
           duration_ms = System.monotonic_time(:millisecond) - started_ms
-          send(pid, {:decomposition_test_done, result, raw_output, duration_ms, model, num_paths, max_iterations})
+          send(
+            pid,
+            {:decomposition_test_done, result, raw_output, duration_ms, model, reasoning_effort,
+             num_paths, max_iterations}
+          )
         end)
 
         {:noreply, socket}
@@ -902,7 +923,8 @@ defmodule OrchidWeb.AgentLive do
   end
 
   def handle_info(
-        {:decomposition_test_done, result, raw_output, duration_ms, model, num_paths, max_iterations},
+        {:decomposition_test_done, result, raw_output, duration_ms, model, reasoning_effort,
+         num_paths, max_iterations},
         socket
       ) do
     socket =
@@ -916,6 +938,7 @@ defmodule OrchidWeb.AgentLive do
               best_plan: best_plan,
               duration_ms: duration_ms,
               model: model,
+              reasoning_effort: reasoning_effort,
               num_paths: num_paths,
               max_iterations: max_iterations,
               ran_at: DateTime.utc_now()
@@ -1683,11 +1706,29 @@ defmodule OrchidWeb.AgentLive do
                           <option value="opus" selected={@decomp_model == :opus}>Opus</option>
                           <option value="sonnet" selected={@decomp_model == :sonnet}>Sonnet</option>
                           <option value="haiku" selected={@decomp_model == :haiku}>Haiku</option>
+                          <option value="gpt54" selected={@decomp_model == :gpt54}>GPT 5.4</option>
                           <option value="gpt53" selected={@decomp_model == :gpt53}>GPT 5.3</option>
+                          <option value="gpt52_codex" selected={@decomp_model == :gpt52_codex}>GPT 5.2 Codex</option>
+                          <option value="gpt51_codex_max" selected={@decomp_model == :gpt51_codex_max}>GPT 5.1 Codex Max</option>
+                          <option value="gpt51_codex" selected={@decomp_model == :gpt51_codex}>GPT 5.1 Codex</option>
+                          <option value="gpt51_codex_mini" selected={@decomp_model == :gpt51_codex_mini}>GPT 5.1 Codex Mini</option>
                           <option value="gemini_3_pro" selected={@decomp_model == :gemini_3_pro}>Gemini 3 Pro</option>
                           <option value="minimax_m2_5" selected={@decomp_model == :minimax_m2_5}>MiniMax M2.5</option>
                           <option value="glm_5" selected={@decomp_model == :glm_5}>GLM-5</option>
                           <option value="kimi_k2_5" selected={@decomp_model == :kimi_k2_5}>Kimi K2.5</option>
+                        </select>
+                        <select
+                          class="sidebar-search"
+                          style="font-size: 0.8rem; padding: 0.2rem 0.5rem; min-width: 11rem;"
+                          phx-change="update_decomp_reasoning_effort"
+                          name="reasoning_effort"
+                          disabled={!decomp_codex_model?(@decomp_model)}
+                          title={if decomp_codex_model?(@decomp_model), do: "Codex thinking level", else: "Thinking level is only used for Codex models"}
+                        >
+                          <option value="low" selected={@decomp_reasoning_effort == :low}>Low</option>
+                          <option value="medium" selected={@decomp_reasoning_effort == :medium}>Medium</option>
+                          <option value="high" selected={@decomp_reasoning_effort == :high}>High</option>
+                          <option value="xhigh" selected={@decomp_reasoning_effort == :xhigh}>Extra high</option>
                         </select>
                         <input
                           type="number"
@@ -1716,6 +1757,14 @@ defmodule OrchidWeb.AgentLive do
                         </button>
                       </div>
                     </div>
+                    <%= if decomp_codex_model?(@decomp_model) do %>
+                      <div style="color: #8b949e; font-size: 0.8rem; margin-bottom: 0.75rem;">
+                        Thinking level: <%= decomp_reasoning_effort_label(@decomp_reasoning_effort) %>
+                        <span style="margin-left: 0.35rem;">
+                          <%= decomp_reasoning_effort_description(@decomp_reasoning_effort) %>
+                        </span>
+                      </div>
+                    <% end %>
 
                     <textarea
                       name="goal"
@@ -1734,7 +1783,7 @@ defmodule OrchidWeb.AgentLive do
 
                   <%= if @decomp_result do %>
                     <div style="margin-bottom: 0.6rem; color: #8b949e; font-size: 0.8rem;">
-                      model=<%= @decomp_result.model %> • paths=<%= @decomp_result.num_paths %> • iterations=<%= @decomp_result.max_iterations %> • duration=<%= @decomp_result.duration_ms %>ms • <%= short_time(@decomp_result.ran_at) %>
+                      model=<%= @decomp_result.model %><%= if decomp_codex_model?(@decomp_result.model), do: " (" <> decomp_reasoning_effort_label(@decomp_result.reasoning_effort) <> ")" %> • paths=<%= @decomp_result.num_paths %> • iterations=<%= @decomp_result.max_iterations %> • duration=<%= @decomp_result.duration_ms %>ms • <%= short_time(@decomp_result.ran_at) %>
                     </div>
                     <div style="background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 0.75rem; margin-bottom: 0.75rem;">
                       <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.35rem;">Raw Model Output</div>
@@ -2295,15 +2344,71 @@ defmodule OrchidWeb.AgentLive do
   defp parse_decomp_model("opus"), do: :opus
   defp parse_decomp_model("sonnet"), do: :sonnet
   defp parse_decomp_model("haiku"), do: :haiku
+  defp parse_decomp_model("gpt54"), do: :gpt54
   defp parse_decomp_model("gpt53"), do: :gpt53
+  defp parse_decomp_model("gpt52_codex"), do: :gpt52_codex
+  defp parse_decomp_model("gpt51_codex_max"), do: :gpt51_codex_max
+  defp parse_decomp_model("gpt51_codex"), do: :gpt51_codex
+  defp parse_decomp_model("gpt51_codex_mini"), do: :gpt51_codex_mini
   defp parse_decomp_model("gemini_3_pro"), do: :gemini_3_pro
   defp parse_decomp_model("minimax_m2_5"), do: :minimax_m2_5
   defp parse_decomp_model("glm_5"), do: :glm_5
   defp parse_decomp_model("kimi_k2_5"), do: :kimi_k2_5
   defp parse_decomp_model(_), do: :sonnet
 
-  defp decomp_llm_config(:gpt53), do: %{provider: :codex, model: :gpt53}
-  defp decomp_llm_config(model), do: %{provider: :cli, model: model}
+  defp parse_decomp_reasoning_effort("low"), do: :low
+  defp parse_decomp_reasoning_effort("medium"), do: :medium
+  defp parse_decomp_reasoning_effort("high"), do: :high
+  defp parse_decomp_reasoning_effort("xhigh"), do: :xhigh
+  defp parse_decomp_reasoning_effort(_), do: :medium
+
+  defp decomp_llm_config(model, reasoning_effort)
+
+  defp decomp_llm_config(:gpt54, reasoning_effort),
+    do: %{provider: :codex, model: "gpt-5.4", reasoning_effort: reasoning_effort}
+
+  defp decomp_llm_config(:gpt53, reasoning_effort),
+    do: %{provider: :codex, model: :gpt53, reasoning_effort: reasoning_effort}
+
+  defp decomp_llm_config(:gpt52_codex, reasoning_effort),
+    do: %{provider: :codex, model: "gpt-5.2-codex", reasoning_effort: reasoning_effort}
+
+  defp decomp_llm_config(:gpt51_codex_max, reasoning_effort),
+    do: %{provider: :codex, model: "gpt-5.1-codex-max", reasoning_effort: reasoning_effort}
+
+  defp decomp_llm_config(:gpt51_codex, reasoning_effort),
+    do: %{provider: :codex, model: "gpt-5.1-codex", reasoning_effort: reasoning_effort}
+
+  defp decomp_llm_config(:gpt51_codex_mini, reasoning_effort),
+    do: %{provider: :codex, model: "gpt-5.1-codex-mini", reasoning_effort: reasoning_effort}
+
+  defp decomp_llm_config(model, _reasoning_effort), do: %{provider: :cli, model: model}
+
+  defp maybe_reset_decomp_reasoning_effort(socket, model) do
+    if decomp_codex_model?(model) do
+      socket
+    else
+      assign(socket, :decomp_reasoning_effort, :medium)
+    end
+  end
+
+  defp decomp_codex_model?(model)
+       when model in [:gpt54, :gpt53, :gpt52_codex, :gpt51_codex_max, :gpt51_codex, :gpt51_codex_mini],
+       do: true
+
+  defp decomp_codex_model?(_), do: false
+
+  defp decomp_reasoning_effort_label(:low), do: "Low"
+  defp decomp_reasoning_effort_label(:medium), do: "Medium"
+  defp decomp_reasoning_effort_label(:high), do: "High"
+  defp decomp_reasoning_effort_label(:xhigh), do: "Extra high"
+  defp decomp_reasoning_effort_label(_), do: "Medium"
+
+  defp decomp_reasoning_effort_description(:low), do: "Fast responses with lighter reasoning"
+  defp decomp_reasoning_effort_description(:medium), do: "Balances speed and reasoning depth for everyday tasks"
+  defp decomp_reasoning_effort_description(:high), do: "Greater reasoning depth for complex problems"
+  defp decomp_reasoning_effort_description(:xhigh), do: "Extra high reasoning depth for complex problems"
+  defp decomp_reasoning_effort_description(_), do: "Balances speed and reasoning depth for everyday tasks"
 
   defp parse_agent_execution_mode("host"), do: :host
   defp parse_agent_execution_mode("root_vm"), do: :host

@@ -8,6 +8,7 @@ defmodule OrchidWeb.SettingsLive do
     socket =
       socket
       |> assign(:facts, Object.list_facts())
+      |> assign(:openai_usage, Orchid.OpenAIUsage.get())
       |> assign(:editing, nil)
       |> assign(:creating, false)
       |> assign(:form_name, "")
@@ -23,6 +24,10 @@ defmodule OrchidWeb.SettingsLive do
       |> assign(:current_project, nil)
       |> assign(:creating_project, false)
       |> assign(:new_project_name, "")
+
+    if connected?(socket) do
+      Orchid.OpenAIUsage.subscribe()
+    end
 
     {:ok, socket}
   end
@@ -136,6 +141,10 @@ defmodule OrchidWeb.SettingsLive do
     {:noreply, assign(socket, :filter_category, category)}
   end
 
+  def handle_event("refresh_openai_usage", _params, socket) do
+    {:noreply, assign(socket, :openai_usage, Orchid.OpenAIUsage.refresh())}
+  end
+
   # Project sidebar events
   def handle_event("search_projects", %{"query" => query}, socket) do
     {:noreply, assign(socket, :project_query, query)}
@@ -196,6 +205,11 @@ defmodule OrchidWeb.SettingsLive do
       end)
 
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:openai_usage_updated, usage_state}, socket) do
+    {:noreply, assign(socket, :openai_usage, usage_state)}
   end
 
   @impl true
@@ -302,6 +316,97 @@ defmodule OrchidWeb.SettingsLive do
                 <% end %>
               </select>
             </form>
+          </div>
+
+          <div style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: start; margin-bottom: 0.75rem;">
+              <div>
+                <h3 style="color: #c9d1d9; margin: 0;">OpenAI Subscription Usage</h3>
+                <div style="color: #8b949e; font-size: 0.8rem; margin-top: 0.15rem;">
+                  Reads Codex ChatGPT auth from <code><%= @openai_usage.auth_file %></code>
+                </div>
+              </div>
+              <button class="btn btn-secondary btn-sm" phx-click="refresh_openai_usage">Refresh</button>
+            </div>
+
+            <%= if @openai_usage.loading and is_nil(@openai_usage.snapshot) do %>
+              <div style="color: #8b949e;">Loading usage data...</div>
+            <% else %>
+              <% snapshot = @openai_usage.snapshot %>
+              <%= if snapshot do %>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                  <div style={"padding: 0.2rem 0.55rem; border-radius: 999px; font-size: 0.8rem; #{openai_usage_state_style(@openai_usage)}"}>
+                    <%= openai_usage_state_label(@openai_usage) %>
+                  </div>
+                  <%= if snapshot.account.plan_type do %>
+                    <div style="padding: 0.2rem 0.55rem; border-radius: 999px; font-size: 0.8rem; background: #0c2d6b; color: #58a6ff;">
+                      Plan: <%= snapshot.account.plan_type %>
+                    </div>
+                  <% end %>
+                  <%= if @openai_usage.last_checked_at do %>
+                    <div style="padding: 0.2rem 0.55rem; border-radius: 999px; font-size: 0.8rem; background: #21262d; color: #8b949e;">
+                      Checked <%= format_usage_time(@openai_usage.last_checked_at) %>
+                    </div>
+                  <% end %>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-bottom: 0.75rem;">
+                  <div style="background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 0.75rem;">
+                    <div style="color: #8b949e; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;">Account</div>
+                    <div style="color: #c9d1d9; margin-top: 0.35rem;"><%= snapshot.account.email || "Unknown" %></div>
+                    <%= if snapshot.account.account_id do %>
+                      <div style="color: #8b949e; font-size: 0.8rem; margin-top: 0.2rem;"><%= snapshot.account.account_id %></div>
+                    <% end %>
+                  </div>
+
+                  <div style="background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 0.75rem;">
+                    <div style="color: #8b949e; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;">Credits</div>
+                    <div style="color: #c9d1d9; margin-top: 0.35rem;"><%= credits_label(snapshot.credits) %></div>
+                    <%= if snapshot.credits && snapshot.credits[:balance] do %>
+                      <div style="color: #8b949e; font-size: 0.8rem; margin-top: 0.2rem;">Balance: <%= snapshot.credits.balance %></div>
+                    <% end %>
+                  </div>
+                </div>
+
+                <%= if snapshot.limits == [] do %>
+                  <div style="color: #8b949e;">No usage limits were returned by the endpoint.</div>
+                <% else %>
+                  <div style="display: flex; flex-direction: column; gap: 0.6rem;">
+                    <%= for limit <- snapshot.limits do %>
+                      <div style="background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 0.75rem;">
+                        <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-bottom: 0.5rem;">
+                          <div style="color: #58a6ff; font-weight: 500;"><%= limit_label(limit) %></div>
+                          <%= if limit.plan_type do %>
+                            <div style="color: #8b949e; font-size: 0.8rem;"><%= limit.plan_type %></div>
+                          <% end %>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.5rem;">
+                          <div style="background: #161b22; border-radius: 4px; padding: 0.55rem;">
+                            <div style="color: #8b949e; font-size: 0.75rem;">Primary</div>
+                            <div style="color: #c9d1d9; margin-top: 0.2rem;"><%= window_label(limit.primary) %></div>
+                          </div>
+                          <div style="background: #161b22; border-radius: 4px; padding: 0.55rem;">
+                            <div style="color: #8b949e; font-size: 0.75rem;">Secondary</div>
+                            <div style="color: #c9d1d9; margin-top: 0.2rem;"><%= window_label(limit.secondary) %></div>
+                          </div>
+                        </div>
+                      </div>
+                    <% end %>
+                  </div>
+                <% end %>
+              <% else %>
+                <div style="color: #8b949e;">
+                  <%= @openai_usage.last_error || "Codex ChatGPT subscription usage is not available yet." %>
+                </div>
+              <% end %>
+            <% end %>
+
+            <%= if @openai_usage.last_error && @openai_usage.snapshot do %>
+              <div style="margin-top: 0.75rem; color: #d29922; font-size: 0.85rem;">
+                <%= @openai_usage.last_error %>
+              </div>
+            <% end %>
           </div>
 
           <%= if @creating or @editing do %>
@@ -474,5 +579,61 @@ defmodule OrchidWeb.SettingsLive do
     |> Enum.sort_by(fn {category, _} ->
       if category == "API Keys", do: {0, category}, else: {1, category}
     end)
+  end
+
+  defp openai_usage_state_label(%{snapshot: nil, last_error: error}) when is_binary(error), do: "Unavailable"
+  defp openai_usage_state_label(%{last_checked_at: nil}), do: "Idle"
+  defp openai_usage_state_label(usage_state) do
+    if stale_usage?(usage_state), do: "Stale", else: "Live"
+  end
+
+  defp openai_usage_state_style(%{snapshot: nil, last_error: error}) when is_binary(error),
+    do: "background: #3d1114; color: #f85149;"
+
+  defp openai_usage_state_style(usage_state) do
+    if stale_usage?(usage_state),
+      do: "background: #2d2000; color: #d29922;",
+      else: "background: #0e2a15; color: #7ee787;"
+  end
+
+  defp stale_usage?(%{last_checked_at: %DateTime{} = checked_at}) do
+    DateTime.diff(DateTime.utc_now(), checked_at, :second) > 900
+  end
+
+  defp stale_usage?(_), do: false
+
+  defp format_usage_time(%DateTime{} = dt) do
+    Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S UTC")
+  end
+
+  defp credits_label(nil), do: "No credits data"
+  defp credits_label(%{unlimited: true}), do: "Unlimited"
+  defp credits_label(%{has_credits: true, balance: balance}) when is_binary(balance), do: "#{balance} credits"
+  defp credits_label(%{has_credits: true}), do: "Credits available"
+  defp credits_label(%{has_credits: false}), do: "No credits"
+  defp credits_label(_), do: "No credits data"
+
+  defp limit_label(limit) do
+    limit[:limit_name] || limit[:limit_id] || "codex"
+  end
+
+  defp window_label(nil), do: "No data"
+
+  defp window_label(window) do
+    percent =
+      case window[:used_percent] do
+        value when is_number(value) -> :erlang.float_to_binary(value * 1.0, decimals: 1) <> "%"
+        _ -> "n/a"
+      end
+
+    parts =
+      [
+        percent,
+        window[:window_minutes] && "#{window.window_minutes} min window",
+        window[:resets_at] && "resets #{format_usage_time(window.resets_at)}"
+      ]
+      |> Enum.reject(&is_nil/1)
+
+    Enum.join(parts, " | ")
   end
 end
