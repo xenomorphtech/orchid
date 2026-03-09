@@ -313,6 +313,8 @@ defmodule Orchid.Sandbox do
     codex_home = System.get_env("CODEX_HOME") || Path.join(home, ".codex")
     codex_bin_path = System.find_executable("codex")
     codex_pkg_path = codex_package_path(codex_bin_path)
+    codex_bridge_dir = Orchid.LLM.Codex.sdk_bridge_dir() |> Path.expand()
+    container_bridge_dir = Orchid.LLM.Codex.container_bridge_dir()
 
     mounts = []
 
@@ -324,6 +326,11 @@ defmodule Orchid.Sandbox do
     mounts =
       if File.dir?(codex_home),
         do: mounts ++ ["-v", "#{codex_home}:/tmp/.codex-host:ro"],
+        else: mounts
+
+    mounts =
+      if File.dir?(codex_bridge_dir),
+        do: mounts ++ ["-v", "#{codex_bridge_dir}:#{container_bridge_dir}:ro"],
         else: mounts
 
     mounts

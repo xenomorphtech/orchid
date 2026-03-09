@@ -78,7 +78,7 @@ defmodule Orchid.Tools.TaskReport do
 
         true ->
           Enum.find(goals, fn g ->
-            g.metadata[:agent_id] == state.id and g.metadata[:status] != :completed
+            g.metadata[:agent_id] == state.id and Goals.open_status?(g.metadata[:status])
           end)
       end
 
@@ -125,7 +125,7 @@ defmodule Orchid.Tools.TaskReport do
 
       pending_children =
         Enum.filter(goals, fn g ->
-          g.metadata[:parent_goal_id] == goal.id and g.metadata[:status] != :completed
+          g.metadata[:parent_goal_id] == goal.id and Goals.open_status?(g.metadata[:status])
         end)
 
       if pending_children == [] do

@@ -11,6 +11,14 @@ defmodule Orchid.GoalWatcher do
 
   @interval :timer.seconds(10)
   @log_file "priv/data/goal_watcher.log"
+  @critic_config %{
+    provider: :codex,
+    model: :gpt54,
+    model_reasoning_effort: "medium",
+    max_turns: 8,
+    max_tokens: 500,
+    disable_tools: true
+  }
 
   def start_link(_opts) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
@@ -74,7 +82,7 @@ defmodule Orchid.GoalWatcher do
     Enum.reduce(projects, state, fn project, acc_state ->
       if project.metadata[:status] in [nil, :active] do
         goals = Orchid.Object.list_goals_for_project(project.id)
-        pending = Enum.filter(goals, fn g -> g.metadata[:status] != :completed end)
+        pending = Enum.filter(goals, fn g -> Orchid.Goals.open_status?(g.metadata[:status]) end)
 
         if pending != [] do
           project_agents = Map.get(agent_states, project.id, [])
@@ -120,7 +128,7 @@ defmodule Orchid.GoalWatcher do
       pending =
         if orphaned != [] do
           Orchid.Object.list_goals_for_project(project.id)
-          |> Enum.filter(fn g -> g.metadata[:status] != :completed end)
+          |> Enum.filter(fn g -> Orchid.Goals.open_status?(g.metadata[:status]) end)
         else
           pending_goals
         end
@@ -153,11 +161,14 @@ defmodule Orchid.GoalWatcher do
 
           assigned_pending =
             Enum.filter(goals, fn g ->
-              g.metadata[:agent_id] == agent_state.id and g.metadata[:status] != :completed
+              g.metadata[:agent_id] == agent_state.id and
+                Orchid.Goals.open_status?(g.metadata[:status])
             end)
 
-          if assigned_pending != [] do
-            goal_names = Enum.map_join(assigned_pending, ", ", & &1.name)
+          re_kickable_goals = Enum.reject(assigned_pending, &goal_blocked?/1)
+
+          if re_kickable_goals != [] do
+            goal_names = Enum.map_join(re_kickable_goals, ", ", & &1.name)
             tag = agent_tag(agent_state)
             last_role = List.last(agent_state.messages) && List.last(agent_state.messages).role
 
@@ -182,7 +193,7 @@ defmodule Orchid.GoalWatcher do
               log("agent #{agent_state.id} (#{tag}) idle, goals: #{goal_names} — re-kicking")
 
               Task.start(fn ->
-                message = build_rekick_message(agent_state, assigned_pending)
+                message = build_rekick_message(agent_state, re_kickable_goals)
 
                 case Orchid.Agent.stream(agent_state.id, message, fn _chunk -> :ok end) do
                   {:ok, response} ->
@@ -212,22 +223,8 @@ defmodule Orchid.GoalWatcher do
         log("ERROR: no Planner template found, skipping project \"#{project.name}\"")
 
       planner ->
-        # Build goal summary for system prompt interpolation
-        goal_summary =
-          pending_goals
-          |> Enum.map(fn g ->
-            deps = g.metadata[:depends_on] || []
-            dep_str = if deps == [], do: "", else: " (depends on: #{Enum.join(deps, ", ")})"
-            desc_str = if g.content != "", do: "\n  #{g.content}", else: ""
-            "- #{g.name} [#{g.id}]#{dep_str}#{desc_str}"
-          end)
-          |> Enum.join("\n")
-
-        # Substitute placeholders in the template system prompt
-        system_prompt =
-          planner.content
-          |> String.replace("{project name}", project.name)
-          |> String.replace("{goals list}", goal_summary)
+        goal_summary = format_goal_summary(pending_goals)
+        system_prompt = planner_system_prompt(planner.content, project.name)
 
         # Ensure sandbox is running before spawning agent
         case Orchid.Projects.ensure_sandbox(project.id) do
@@ -270,9 +267,7 @@ defmodule Orchid.GoalWatcher do
               log("  assigned goal \"#{goal.name}\" [#{goal.id}] -> #{agent_id}")
             end
 
-            message = """
-            Begin your Standard Operating Procedure now. Inspect the workspace, synchronize with the goal registry, and execute.
-            """
+            message = planner_kickoff_message(project.name, project.content, goal_summary)
 
             Task.start(fn ->
               log("streaming kickoff to planner #{agent_id}...")
@@ -301,6 +296,49 @@ defmodule Orchid.GoalWatcher do
   defp find_planner_template do
     Orchid.Object.list_agent_templates()
     |> Enum.find(fn t -> t.name == "Planner" end)
+  end
+
+  defp format_goal_summary([]), do: "(none)"
+
+  defp format_goal_summary(goals) do
+    goals
+    |> Enum.map(fn g ->
+      deps = g.metadata[:depends_on] || []
+      dep_str = if deps == [], do: "", else: " (depends on: #{Enum.join(deps, ", ")})"
+      desc_str = if g.content != "", do: "\n  #{g.content}", else: ""
+      "- #{g.name} [#{g.id}]#{dep_str}#{desc_str}"
+    end)
+    |> Enum.join("\n")
+  end
+
+  defp planner_system_prompt(prompt, project_name) do
+    prompt
+    |> String.replace("{project name}", project_name)
+    |> String.replace(~r/\n## Context\nCurrent objectives:\n\{goals list\}\s*\z/s, "")
+    |> String.replace("{goals list}", "")
+    |> String.trim()
+  end
+
+  @doc false
+  def planner_kickoff_message(project_name, project_brief, goal_summary) do
+    brief_section =
+      case String.trim(project_brief || "") do
+        "" -> []
+        brief -> ["Saved project brief:", brief, ""]
+      end
+
+    [
+      "Project: #{project_name}",
+      "",
+      brief_section,
+      "Current objectives:",
+      goal_summary,
+      "",
+      "Use this as an initial snapshot only. First call `goal_list` to confirm the live state, then inspect the workspace and continue with the next actionable work."
+    ]
+    |> List.flatten()
+    |> Enum.join("\n")
+    |> String.trim()
   end
 
   # Short tag for log lines: "TemplateName/provider"
@@ -334,17 +372,24 @@ defmodule Orchid.GoalWatcher do
     goal_names = Enum.map_join(assigned_pending, ", ", & &1.name)
     assistant_msg = last_assistant_message(agent_state)
 
+    completion_instruction =
+      if agent_state.config[:use_orchid_tools] do
+        "If work is complete, call `task_report` with `outcome: \"success\"` and include a concise report."
+      else
+        "If work is complete, return a concise completion report directly. Do not mention unavailable tools."
+      end
+
     case summarize_last_update(assistant_msg, assigned_pending) do
       {:ok, %{status: status, summary: summary, error: error}} ->
         """
-        Review of your last update (Sonnet):
+        Review of your last update:
         - Status: #{status}
         - Summary: #{summary}
         #{if(error, do: "- Error: #{error}", else: "")}
 
         Pending goals: #{goal_names}
 
-        If work is complete, call `task_report` with `outcome: "success"` and include a concise report.
+        #{completion_instruction}
         If blocked, continue execution and report the exact failing command/output.
         """
         |> String.trim()
@@ -362,12 +407,16 @@ defmodule Orchid.GoalWatcher do
 
     system = """
     You summarize worker status for orchestration.
+    Judge progress against the actual goals and acceptance criteria in the text provided.
+    Do not assume source edits, builds, or tests are required unless the goals explicitly require them.
+    If the worker provided meaningful execution evidence, commands, or artifact paths for a non-code goal,
+    count that as real progress instead of treating it as missing implementation work.
     Return exactly one JSON object in a single response. Do not call tools.
     Return strict JSON only with keys:
     - status: one of "completed", "error", "in_progress", "unknown"
     - summary: short string (<= 220 chars)
     - error: string or null
-    Be conservative.
+    Be concise and evidence-based.
     """
 
     user = """
@@ -385,9 +434,7 @@ defmodule Orchid.GoalWatcher do
       memory: %{}
     }
 
-    config = %{provider: :cli, model: :sonnet, max_turns: 8, max_tokens: 500, disable_tools: true}
-
-    with {:ok, %{content: raw}} <- LLM.chat(config, context),
+    with {:ok, %{content: raw}} <- LLM.chat(@critic_config, context),
          {:ok, parsed} <- parse_summary_json(raw) do
       {:ok, parsed}
     end
@@ -452,4 +499,24 @@ defmodule Orchid.GoalWatcher do
       text
     end
   end
+
+  defp goal_blocked?(goal) do
+    normalize_task_outcome(goal.metadata[:task_outcome]) == :blocked
+  end
+
+  defp normalize_task_outcome(outcome)
+       when outcome in [:success, :failure, :blocked, :in_progress],
+       do: outcome
+
+  defp normalize_task_outcome(outcome) when is_binary(outcome) do
+    case String.downcase(String.trim(outcome)) do
+      "success" -> :success
+      "failure" -> :failure
+      "blocked" -> :blocked
+      "in_progress" -> :in_progress
+      _ -> nil
+    end
+  end
+
+  defp normalize_task_outcome(_), do: nil
 end

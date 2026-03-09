@@ -1,0 +1,9 @@
+{
+  "name": "orchid-codex-sdk-bridge",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@openai/codex": "0.111.0",
+    "@openai/codex-sdk": "0.111.0"
+  }
+}

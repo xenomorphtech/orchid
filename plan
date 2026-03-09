@@ -1,0 +1,563 @@
+
+
+
+
+
+
+Let's dive deeper into the Elixir implementation for `sdancer/orchid`. We will flesh out the complete `NodeServer` lifecycle, handle the message passing for execution success/failure, and define the Aletheia-specific LLM integration modules.
+
+
+
+### 1. The Agent State and NodeServer (The Core Engine)
+
+
+
+First, we define a strict struct for our Node's state. In Elixir, immutability makes it very easy to track the timeline of what was planned, what succeeded, and what failed.
+
+
+
+```elixir
+
+defmodule Orchid.Agent.State do
+
+  @moduledoc """
+
+  Holds the state of a single decomposition node in the Aletheia hierarchy.
+
+  """
+
+  defstruct,                 # The full generated plan
+
+    pending_tasks:[],        # Sub-tasks yet to be executed
+
+    completed_tasks: [],      # History of successful tasks
+
+    status: :init,            # :planning, :verifying, :executing, :replanning
+
+    depth: 0                  # Max depth circuit breaker
+
+  ]
+
+end
+
+```
+
+
+
+Now, let's write the complete `Orchid.Agent.NodeServer`. This handles the G-V-R (Generate-Verify-Revise) loop and the dynamic execution queue.
+
+
+
+```elixir
+
+defmodule Orchid.Agent.NodeServer do
+
+  use GenServer
+
+  require Logger
+
+
+
+  alias Orchid.Agent.{State, Planner, Verifier, Reviser, Tools}
+
+
+
+  # --- Client API ---
+
+
+
+  def start_link(opts) do
+
+    GenServer.start_link(__MODULE__, opts)
+
+  end
+
+
+
+  # --- Server Callbacks ---
+
+
+
+  @impl true
+
+  def init(opts) do
+
+    state = %State{
+
+      id: Keyword.get(opts, :id, Ecto.UUID.generate()),
+
+      parent_pid: Keyword.get(opts, :parent_pid),
+
+      objective: Keyword.fetch!(opts, :objective),
+
+      depth: Keyword.get(opts, :depth, 0)
+
+    }
+
+
+
+    # Kick off the Aletheia planning loop immediately
+
+    send(self(), :generate_plan)
+
+    
+
+    {:ok, state}
+
+  end
+
+
+
+  # --- Phase 1: Planning (Generator) ---
+
+  @impl true
+
+  def handle_info(:generate_plan, state) do
+
+    Logger.info(" Generating plan for objective: #{state.objective}")
+
+    
+
+    # Passes the objective AND execution history (crucial for replanning)
+
+    plan = Planner.decompose(state.objective, state.completed_tasks)
+
+    
+
+    send(self(), :verify_plan)
+
+    {:noreply, %{state | plan: plan, status: :verifying}}
+
+  end
+
+
+
+  # --- Phase 2: Verification & Revision (Verifier/Reviser) ---
+
+  @impl true
+
+  def handle_info(:verify_plan, state) do
+
+    Logger.info(" Verifying proposed plan...")
+
+    
+
+    case Verifier.critique(state.objective, state.plan) do
+
+      {:approved, _reason} ->
+
+        Logger.info(" Plan approved! Starting execution.")
+
+        send(self(), :execute_next)
+
+        {:noreply, %{state | pending_tasks: state.plan, status: :executing}}
+
+
+
+      {:flawed, critique} ->
+
+        Logger.warning(" Plan flawed. Revising. Reason: #{critique}")
+
+        revised_plan = Reviser.fix(state.plan, critique, state.objective)
+
+        
+
+        # Loop back to verification
+
+        send(self(), :verify_plan)
+
+        {:noreply, %{state | plan: revised_plan}}
+
+    end
+
+  end
+
+
+
+  # --- Phase 3: Execution Engine & Routing ---
+
+  @impl true
+
+  def handle_info(:execute_next, %State{pending_tasks: []} = state) do
+
+    Logger.info(" All tasks completed successfully.")
+
+    
+
+    # We achieved the objective! Report up to parent, or finalize if root.
+
+    if state.parent_pid do
+
+      send(state.parent_pid, {:child_success, state.id, state.completed_tasks})
+
+    end
+
+    
+
+    {:stop, :normal, state}
+
+  end
+
+
+
+  def handle_info(:execute_next, %State{pending_tasks:} = state) do
+
+    # Check if this task should be broken down further (spawn child node)
+
+    # or if it's a leaf task (direct tool execution).
+
+    if current_task.type == :delegate do
+
+      # Spawn a child node under our DynamicSupervisor
+
+      {:ok, child_pid} = DynamicSupervisor.start_child(
+
+        Orchid.NodeSupervisor,
+
+        {__MODULE__,}
+
+      )
+
+      
+
+      Logger.info(" Delegated task to child node (PID: #{inspect(child_pid)})")
+
+      # We just update state to wait; the child will send a message back.
+
+      {:noreply, %{state | pending_tasks: remaining}}
+
+    else
+
+      # Leaf node: Execute tool directly
+
+      result = Tools.execute(current_task)
+
+      send(self(), {:child_success, current_task.id, result})
+
+      {:noreply, %{state | pending_tasks: remaining}}
+
+    end
+
+  end
+
+
+
+  # --- Phase 4: The Execution-to-Planning Feedback Loop ---
+
+
+
+  # Handle Success
+
+  @impl true
+
+  def handle_info({:child_success, task_id, result}, state) do
+
+    Logger.info(" Task #{task_id} succeeded.")
+
+    
+
+    new_completed = state.completed_tasks ++
+
+    
+
+    send(self(), :execute_next)
+
+    {:noreply, %{state | completed_tasks: new_completed}}
+
+  end
+
+
+
+  # Handle Failure (The Aletheia Re-planning Trigger)
+
+  @impl true
+
+  def handle_info({:child_failed, task_id, failure_reason, context}, state) do
+
+    Logger.error(" Task #{task_id} explicitly failed: #{failure_reason}")
+
+    
+
+    # 1. We do NOT crash. We formulate a replanning context.
+
+    replanning_context = """
+
+    We were trying to achieve: #{state.objective}.
+
+    We successfully completed: #{inspect(state.completed_tasks)}.
+
+    We attempted task '#{task_id}' but it failed because: #{failure_reason}.
+
+    Additional context: #{context}.
+
+    
+
+    Your goal is to generate a NEW plan to achieve the original objective from this exact state, 
+
+    finding an alternative route that avoids the failure.
+
+    """
+
+
+
+    # 2. Reset our plan and trigger a new planning phase
+
+    send(self(), :generate_plan)
+
+    
+
+    {:noreply, %{
+
+      state | 
+
+      objective: replanning_context, # The objective is now context-aware
+
+      pending_tasks:[],             # Dump the old queue
+
+      status: :replanning
+
+    }}
+
+  end
+
+end
+
+```
+
+
+
+### 2. Aletheia Prompt Interfaces
+
+
+
+To make this Elixir code actually behave like DeepMind's Aletheia, the LLM module calls (`Planner`, `Verifier`, etc.) need strict, System-2-style prompting. 
+
+
+
+Here is how you structure the `Planner` and `Verifier` modules in Elixir.
+
+
+
+```elixir
+
+defmodule Orchid.Agent.Planner do
+
+  @moduledoc "Generates task decompositions."
+
+  
+
+  # Assumes you have an LLM wrapper (e.g., using LangChain or raw HTTPoison/Req to OpenAI/Anthropic)
+
+  alias Orchid.LLM
+
+
+
+  def decompose(objective, completed_tasks) do
+
+    prompt = """
+
+    You are the Generator node in an Aletheia-style autonomous system.
+
+    
+
+    CURRENT OBJECTIVE:
+
+    #{objective}
+
+    
+
+    COMPLETED HISTORY:
+
+    #{inspect(completed_tasks)}
+
+    
+
+    INSTRUCTIONS:
+
+    1. Output a <thinking> block where you break down the objective logically. Anticipate prerequisites.
+
+    2. Decompose the remaining work into an array of sub-tasks.
+
+    3. Each task must have a "type" (either "delegate" for complex tasks requiring a sub-agent, or "tool" for direct actions like "search_web", "read_file").
+
+    4. Output the final plan as a valid JSON array inside ```json tags.
+
+    """
+
+
+
+    response = LLM.call(prompt, model: "claude-3-7-sonnet") # Or deepseek-reasoner / o3-mini
+
+    
+
+    extract_json_plan(response)
+
+  end
+
+  
+
+  defp extract_json_plan(llm_response), do: # regex/json parsing logic
+
+end
+
+
+
+defmodule Orchid.Agent.Verifier do
+
+  @moduledoc "Critiques plans to prevent hallucination and logic errors."
+
+  alias Orchid.LLM
+
+
+
+  def critique(objective, plan) do
+
+    # Balanced Prompting: DeepMind explicitly found that forcing the model 
+
+    # to argue BOTH sides prevents "sycophancy" (the model just agreeing).
+
+    prompt = """
+
+    You are the Verifier node. Your job is to evaluate a Proposed Plan.
+
+    
+
+    OBJECTIVE: #{objective}
+
+    PROPOSED PLAN: #{inspect(plan)}
+
+    
+
+    INSTRUCTIONS:
+
+    1. First, write a paragraph arguing why this plan is FLAWLESS and will definitely succeed.
+
+    2. Second, write a paragraph arguing why this plan is TERRIBLE, identifying missing prerequisites, logical gaps, or hallucinated capabilities.
+
+    3. Finally, weigh the two arguments. If the plan has fatal flaws, output a JSON object: `{"status": "flawed", "critique": "..."}`.
+
+    4. If the plan is sound, output: `{"status": "approved", "reason": "..."}`.
+
+    """
+
+
+
+    response = LLM.call(prompt, model: "gpt-4o")
+
+    
+
+    # Parse JSON...
+
+    # Returns {:approved, reason} or {:flawed, critique}
+
+  end
+
+end
+
+```
+
+
+
+### 3. DeepMind's "Explicit Failure" in the Executor
+
+
+
+Standard agents hallucinate when a tool fails (e.g., they try to read a missing file 10 times). The Aletheia framework requires an "Explicit Failure" path so the system can quickly bubble up errors.
+
+
+
+In your `Tools` module, or when a Leaf Node executes, you define a hard stop:
+
+
+
+```elixir
+
+defmodule Orchid.Agent.Tools do
+
+  def execute(task) do
+
+    case execute_actual_tool(task) do
+
+      {:ok, result} -> 
+
+        result
+
+      {:error, reason} ->
+
+        # Retry logic here (e.g., max 3 times)
+
+        # If it still fails, we force the Explicit Failure structure
+
+        trigger_explicit_failure(task, reason)
+
+    end
+
+  end
+
+
+
+  defp trigger_explicit_failure(task, reason) do
+
+    # Sends the failure message back to the NodeServer's mailbox
+
+    # This triggers the `handle_info({:child_failed, ...})` defined above!
+
+    send(self(), {:child_failed, task.id, "Tool Execution Failed", reason})
+
+    
+
+    # Halt this specific execution path gracefully
+
+    throw(:explicit_failure_bubbling_up) 
+
+  end
+
+end
+
+```
+
+
+
+### 4. Integration into the Elixir App
+
+
+
+Finally, make sure you have the `DynamicSupervisor` set up in your `application.ex`:
+
+
+
+```elixir
+
+defmodule Orchid.Application do
+
+  use Application
+
+
+
+  @impl true
+
+  def start(_type, _args) do
+
+    children =
+
+
+
+    opts =
+
+    Supervisor.start_link(children, opts)
+
+  end
+
+end
+
+```
+
+
+
+### Why this architecture is powerful for `orchid`:
+
+1. **Crash Isolation**: If a sub-task LLM outputs garbage that crashes the JSON parser, the Elixir `DynamicSupervisor` restarts just that specific `NodeServer`. The parent node isn't affected.
+
+2. **Asynchronous Execution**: If the `Planner` determines tasks A and B are independent, you can easily modify `handle_info(:execute_next, ...)` to spawn two child nodes simultaneously and use `Task.yield_many` or wait for both `:child_success` messages.
+
+3. **Memory Management**: Because the state is held in GenServers, you don't need a massive vector database just to remember what the agent did 5 minutes ago. The context is built dynamically via the `completed_tasks` history as it bubbles up and down the tree.

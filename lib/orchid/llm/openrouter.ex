@@ -4,20 +4,13 @@ defmodule Orchid.LLM.OpenRouter do
   Handles chat completion with streaming and tool use support.
   """
   require Logger
+  alias Orchid.LLM.Catalog
 
   @base_url "https://openrouter.ai/api/v1/chat/completions"
 
-  @models %{
-    minimax_m2_5: "minimax/minimax-m2.5",
-    glm_5: "z-ai/glm-5",
-    kimi_k2_5: "moonshotai/kimi-k2.5"
-  }
-
-  @default_model :minimax_m2_5
-
   def chat(config, context) do
     with {:ok, api_key} <- get_api_key(config) do
-      model = resolve_model(config[:model])
+      model = Catalog.resolve_model(config[:model], :openrouter)
       body = build_request_body(config, context, model)
 
       Logger.info("OpenRouter: sending to #{model}, #{length(context.messages)} messages")
@@ -39,11 +32,14 @@ defmodule Orchid.LLM.OpenRouter do
 
   def chat_stream(config, context, callback) do
     with {:ok, api_key} <- get_api_key(config) do
-      model = resolve_model(config[:model])
+      model = Catalog.resolve_model(config[:model], :openrouter)
       body = build_request_body(config, context, model) |> Map.put(:stream, true)
 
       tool_count = length(body[:tools] || [])
-      Logger.info("OpenRouter: streaming to #{model}, #{tool_count} tools, #{length(context.messages)} messages")
+
+      Logger.info(
+        "OpenRouter: streaming to #{model}, #{tool_count} tools, #{length(context.messages)} messages"
+      )
 
       acc = %{content: "", tool_calls: [], current_tc_index: nil}
 
@@ -54,23 +50,37 @@ defmodule Orchid.LLM.OpenRouter do
         {:cont, {req, resp}}
       end
 
-      case Req.post(@base_url, json: body, headers: headers(api_key), receive_timeout: 300_000, into: stream_fun) do
+      case Req.post(@base_url,
+             json: body,
+             headers: headers(api_key),
+             receive_timeout: 300_000,
+             into: stream_fun
+           ) do
         {:ok, %{status: 200}} ->
           final = Process.get(:openrouter_acc, acc)
           Process.delete(:openrouter_acc)
+
           tool_calls =
             case final.tool_calls do
-              [] -> nil
+              [] ->
+                nil
+
               tcs ->
                 Enum.map(tcs, fn tc ->
-                  args = case Jason.decode(tc[:_args_json] || "{}") do
-                    {:ok, parsed} -> parsed
-                    _ -> %{}
-                  end
+                  args =
+                    case Jason.decode(tc[:_args_json] || "{}") do
+                      {:ok, parsed} -> parsed
+                      _ -> %{}
+                    end
+
                   %{id: tc.id, name: tc.name, arguments: args}
                 end)
             end
-          Logger.info("OpenRouter: response complete, content=#{String.length(final.content)} chars, tool_calls=#{if tool_calls, do: length(tool_calls), else: 0}")
+
+          Logger.info(
+            "OpenRouter: response complete, content=#{String.length(final.content)} chars, tool_calls=#{if tool_calls, do: length(tool_calls), else: 0}"
+          )
+
           {:ok, %{content: final.content, tool_calls: tool_calls}}
 
         {:ok, %{status: status, body: resp_body}} ->
@@ -103,13 +113,15 @@ defmodule Orchid.LLM.OpenRouter do
 
   defp get_api_key(config) do
     case config[:api_key] || Orchid.Object.get_fact_value("openrouter_api_key") do
-      nil -> {:error, {:api_key_missing, "openrouter_api_key fact not set. Add it in Settings > Facts or local facts file."}}
-      key -> {:ok, key}
+      nil ->
+        {:error,
+         {:api_key_missing,
+          "openrouter_api_key fact not set. Add it in Settings > Facts or local facts file."}}
+
+      key ->
+        {:ok, key}
     end
   end
-
-  defp resolve_model(model) when is_binary(model), do: model
-  defp resolve_model(model), do: Map.get(@models, model, Map.get(@models, @default_model))
 
   defp headers(api_key) do
     [
@@ -159,12 +171,22 @@ defmodule Orchid.LLM.OpenRouter do
 
           :assistant ->
             base = %{role: "assistant"}
-            base = if msg.content && msg.content != "", do: Map.put(base, :content, msg.content), else: base
+
+            base =
+              if msg.content && msg.content != "",
+                do: Map.put(base, :content, msg.content),
+                else: base
 
             if msg[:tool_calls] && msg.tool_calls != [] do
-              tc = Enum.map(msg.tool_calls, fn tc ->
-                %{id: tc.id, type: "function", function: %{name: tc.name, arguments: Jason.encode!(tc.arguments || %{})}}
-              end)
+              tc =
+                Enum.map(msg.tool_calls, fn tc ->
+                  %{
+                    id: tc.id,
+                    type: "function",
+                    function: %{name: tc.name, arguments: Jason.encode!(tc.arguments || %{})}
+                  }
+                end)
+
               Map.put(base, :tool_calls, tc)
             else
               Map.put(base, :content, msg.content || "")
@@ -213,17 +235,22 @@ defmodule Orchid.LLM.OpenRouter do
 
     tool_calls =
       case message["tool_calls"] do
-        nil -> nil
-        [] -> nil
+        nil ->
+          nil
+
+        [] ->
+          nil
+
         tcs ->
           Enum.map(tcs, fn tc ->
             %{
               id: tc["id"],
               name: get_in(tc, ["function", "name"]),
-              arguments: case Jason.decode(get_in(tc, ["function", "arguments"]) || "{}") do
-                {:ok, args} -> args
-                _ -> %{}
-              end
+              arguments:
+                case Jason.decode(get_in(tc, ["function", "arguments"]) || "{}") do
+                  {:ok, args} -> args
+                  _ -> %{}
+                end
             }
           end)
       end
@@ -285,8 +312,12 @@ defmodule Orchid.LLM.OpenRouter do
               # Handle text content
               acc =
                 case delta["content"] do
-                  nil -> acc
-                  "" -> acc
+                  nil ->
+                    acc
+
+                  "" ->
+                    acc
+
                   text ->
                     callback.(text)
                     %{acc | content: acc.content <> text}
@@ -294,7 +325,9 @@ defmodule Orchid.LLM.OpenRouter do
 
               # Handle tool calls (streamed incrementally)
               case delta["tool_calls"] do
-                nil -> acc
+                nil ->
+                  acc
+
                 tool_deltas ->
                   Enum.reduce(tool_deltas, acc, fn td, acc ->
                     idx = td["index"]
@@ -306,6 +339,7 @@ defmodule Orchid.LLM.OpenRouter do
                         name: get_in(td, ["function", "name"]) || "",
                         _args_json: get_in(td, ["function", "arguments"]) || ""
                       }
+
                       %{acc | tool_calls: acc.tool_calls ++ [tc], current_tc_index: idx}
                     else
                       # Continuation of existing tool call (appending arguments)
@@ -313,6 +347,7 @@ defmodule Orchid.LLM.OpenRouter do
                       tc_list = acc.tool_calls
                       # Find the tool call at this index
                       tc_pos = length(tc_list) - 1
+
                       if tc_pos >= 0 do
                         tc = Enum.at(tc_list, tc_pos)
                         existing = tc[:_args_json] || ""

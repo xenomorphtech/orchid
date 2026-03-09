@@ -30,7 +30,7 @@ get_pid() {
     rm -f "$PIDFILE"
   fi
   # Fallback: find by process name
-  pgrep -f "orchid@127.0.0.1.*mix phx.server" 2>/dev/null | head -1
+  pgrep -f "[o]rchid@127.0.0.1.*mix phx.server" 2>/dev/null | head -1
 }
 
 do_start() {
@@ -51,7 +51,8 @@ do_start() {
     ulimit -n "$hard_nofile" 2>/dev/null || true
   fi
 
-  elixir --name orchid@127.0.0.1 -S mix phx.server >> "$LOGFILE" 2>&1 &
+  # Detach from the invoking shell so the server keeps running after the CLI exits.
+  setsid elixir --name orchid@127.0.0.1 -S mix phx.server < /dev/null >> "$LOGFILE" 2>&1 &
   local pid=$!
 
   # Verify process survives initial boot before reporting success

@@ -29,3 +29,4 @@ orchid_temp-*.tar
 
 # CubDB persistent data
 /priv/data/
+/priv/codex_sdk/node_modules/

@@ -150,7 +150,7 @@ defmodule OrchidWeb.SettingsLive do
   end
 
   def handle_event("show_new_project", _params, socket) do
-    {:noreply, assign(socket, creating_project: true, new_project_name: "")}
+    {:noreply, push_navigate(socket, to: "/?new_project=1")}
   end
 
   def handle_event("cancel_new_project", _params, socket) do
@@ -462,7 +462,9 @@ defmodule OrchidWeb.SettingsLive do
   defp filtered_facts(facts, query, category) do
     facts
     |> Enum.filter(fn f ->
-      matches_query = query == "" or String.contains?(String.downcase(f.name), String.downcase(query))
+      matches_query =
+        query == "" or String.contains?(String.downcase(f.name), String.downcase(query))
+
       matches_category = category == "All" or (f.metadata[:category] || "General") == category
       matches_query and matches_category
     end)

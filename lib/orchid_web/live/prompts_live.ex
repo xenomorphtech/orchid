@@ -103,7 +103,7 @@ defmodule OrchidWeb.PromptsLive do
   end
 
   def handle_event("show_new_project", _params, socket) do
-    {:noreply, assign(socket, creating_project: true, new_project_name: "")}
+    {:noreply, push_navigate(socket, to: "/?new_project=1")}
   end
 
   def handle_event("cancel_new_project", _params, socket) do
@@ -399,11 +399,11 @@ defmodule OrchidWeb.PromptsLive do
                           <button
                             phx-click="toggle_goal_status"
                             phx-value-id={goal.id}
-                            style={"width: 1.25rem; height: 1.25rem; border-radius: 3px; border: 1px solid #30363d; background: #{if goal.metadata[:status] == :completed, do: "#238636", else: "transparent"}; cursor: pointer; display: flex; align-items: center; justify-content: center; color: white; font-size: 0.7rem;"}
+                            style={"width: 1.25rem; height: 1.25rem; border-radius: 3px; border: 1px solid #30363d; background: #{if Orchid.Goals.terminal_status?(goal.metadata[:status]), do: "#238636", else: "transparent"}; cursor: pointer; display: flex; align-items: center; justify-content: center; color: white; font-size: 0.7rem;"}
                           >
-                            <%= if goal.metadata[:status] == :completed, do: "✓", else: "" %>
+                            <%= if Orchid.Goals.terminal_status?(goal.metadata[:status]), do: "✓", else: "" %>
                           </button>
-                          <span style={"flex: 1; color: #{if goal.metadata[:status] == :completed, do: "#8b949e", else: "#c9d1d9"}; #{if goal.metadata[:status] == :completed, do: "text-decoration: line-through;", else: ""}"}><%= goal.name %></span>
+                          <span style={"flex: 1; color: #{if Orchid.Goals.terminal_status?(goal.metadata[:status]), do: "#8b949e", else: "#c9d1d9"}; #{if Orchid.Goals.terminal_status?(goal.metadata[:status]), do: "text-decoration: line-through;", else: ""}"}><%= goal.name %></span>
                           <button
                             class="btn btn-secondary btn-sm"
                             style="padding: 0.15rem 0.4rem; font-size: 0.7rem;"
@@ -598,6 +598,7 @@ defmodule OrchidWeb.PromptsLive do
     cond do
       outcome in [:failure, :blocked] -> outcome
       status == :completed -> :success
+      status == :superseded -> :superseded
       outcome == :success -> :success
       true -> nil
     end
@@ -615,11 +616,13 @@ defmodule OrchidWeb.PromptsLive do
   end
 
   defp goal_outcome_label(:success), do: "Completed"
+  defp goal_outcome_label(:superseded), do: "Superseded"
   defp goal_outcome_label(:failure), do: "Failed"
   defp goal_outcome_label(:blocked), do: "Blocked"
   defp goal_outcome_label(_), do: "Done"
 
   defp goal_outcome_style(:success), do: "background: #0e2a15; color: #7ee787;"
+  defp goal_outcome_style(:superseded), do: "background: #2d2000; color: #d29922;"
   defp goal_outcome_style(:failure), do: "background: #3d1114; color: #f85149;"
   defp goal_outcome_style(:blocked), do: "background: #2d2000; color: #d29922;"
   defp goal_outcome_style(_), do: "background: #21262d; color: #8b949e;"
@@ -630,6 +633,7 @@ defmodule OrchidWeb.PromptsLive do
     case String.downcase(v) do
       "completed" -> :completed
       "pending" -> :pending
+      "superseded" -> :superseded
       _ -> nil
     end
   end

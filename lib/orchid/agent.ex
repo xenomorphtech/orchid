@@ -8,6 +8,15 @@ defmodule Orchid.Agent do
 
   alias Orchid.{Store, Object, LLM}
 
+  @critic_config %{
+    provider: :codex,
+    model: :gpt54,
+    model_reasoning_effort: "medium",
+    max_tokens: 700,
+    max_turns: 8,
+    disable_tools: true
+  }
+
   defmodule State do
     @moduledoc false
     defstruct [
@@ -16,6 +25,7 @@ defmodule Orchid.Agent do
       :project_id,
       :execution_mode,
       :sandbox,
+      lifecycle: :running,
       messages: [],
       objects: [],
       tool_history: [],
@@ -90,12 +100,13 @@ defmodule Orchid.Agent do
   """
   def stream(agent_id, message, callback) when is_function(callback, 1) do
     caller = self()
-    cast(agent_id, {:run, message, {callback, caller}})
-    # Block caller until done, so existing callers keep working
-    receive do
-      {:agent_done, ^agent_id, result} -> result
-    after
-      660_000 -> {:error, :timeout}
+
+    case cast(agent_id, {:run, message, {callback, caller}}) do
+      :ok ->
+        await_agent_done(agent_id, 660_000)
+
+      error ->
+        error
     end
   end
 
@@ -114,12 +125,13 @@ defmodule Orchid.Agent do
   """
   def retry(agent_id, callback \\ fn _chunk -> :ok end) do
     caller = self()
-    cast(agent_id, {:retry, {callback, caller}})
 
-    receive do
-      {:agent_done, ^agent_id, result} -> result
-    after
-      660_000 -> {:error, :timeout}
+    case cast(agent_id, {:retry, {callback, caller}}) do
+      :ok ->
+        await_agent_done(agent_id, 660_000)
+
+      error ->
+        error
     end
   end
 
@@ -139,7 +151,9 @@ defmodule Orchid.Agent do
   Publish agent state to ETS. Can be called from any process (including Tasks).
   """
   def publish_state(state) do
-    :ets.insert(:orchid_agent_states, {state.id, state})
+    if agent_runtime_lifecycle(state.id) == :running do
+      :ets.insert(:orchid_agent_states, {state.id, state})
+    end
   end
 
   @doc """
@@ -161,9 +175,13 @@ defmodule Orchid.Agent do
   Stop an agent.
   """
   def stop(agent_id, reason \\ :manual_stop) do
-    case Registry.lookup(Orchid.Registry, agent_id) do
-      [{pid, _}] -> GenServer.stop(pid, reason)
-      [] -> {:error, :not_found}
+    case call(agent_id, {:stop_agent, reason}, 5_000) do
+      :ok ->
+        wait_until_stopped(agent_id, 50)
+        :ok
+
+      other ->
+        other
     end
   end
 
@@ -240,6 +258,7 @@ defmodule Orchid.Agent do
       "Agent #{id} started, project=#{inspect(state.project_id)}, mode=#{state.execution_mode}, provider=#{config[:provider]}, model=#{config[:model]}"
     )
 
+    put_runtime(id, %{lifecycle: :running, worker_pid: nil})
     publish_state(state)
     Store.put_agent_state(id, state)
     {:ok, state}
@@ -302,7 +321,20 @@ defmodule Orchid.Agent do
     {:reply, {:ok, state.notifications}, new_state}
   end
 
+  def handle_call({:stop_agent, reason}, _from, state) do
+    stopping_state = %{state | lifecycle: :stopping}
+    put_runtime(state.id, %{lifecycle: :stopping})
+    stop_worker(state.id)
+    stop_reason = if reason == :manual_stop, do: {:shutdown, :manual_stop}, else: reason
+    {:stop, stop_reason, :ok, stopping_state}
+  end
+
   @impl true
+  def handle_cast({:notify, _message}, %{lifecycle: lifecycle} = state)
+      when lifecycle != :running do
+    {:noreply, state}
+  end
+
   def handle_cast({:notify, message}, state) do
     state =
       state
@@ -314,43 +346,23 @@ defmodule Orchid.Agent do
     {:noreply, state}
   end
 
+  def handle_cast({:retry, notify}, %{lifecycle: lifecycle} = state) when lifecycle != :running do
+    maybe_notify_waiter(state.id, notify, {:error, :stopped})
+    {:noreply, state}
+  end
+
   def handle_cast({:retry, notify}, state) do
     # Re-run the LLM without adding a new message (last message already in history)
     state = %{state | status: :thinking}
     state = %{state | memory: Map.put(state.memory, :task_report_used_in_turn, false)}
     publish_state(state)
+    start_worker(state, notify)
+    {:noreply, state}
+  end
 
-    agent_pid = self()
-    agent_id = state.id
-
-    {callback, caller} =
-      case notify do
-        {cb, caller_pid} -> {cb, caller_pid}
-        nil -> {fn _chunk -> :ok end, nil}
-      end
-
-    Task.start(fn ->
-      result =
-        try do
-          case run_agent_loop_streaming(state, callback, 10, agent_pid) do
-            {:ok, response, new_state} ->
-              send(agent_pid, {:work_done, new_state, {:ok, response}})
-              {:ok, response}
-
-            {:error, reason, new_state} ->
-              send(agent_pid, {:work_done, new_state, {:error, reason}})
-              {:error, reason}
-          end
-        rescue
-          e ->
-            Logger.error("Agent #{agent_id} run loop crashed: #{Exception.message(e)}")
-            send(agent_pid, {:work_done, state, {:error, Exception.message(e)}})
-            {:error, Exception.message(e)}
-        end
-
-      if caller, do: send(caller, {:agent_done, agent_id, result})
-    end)
-
+  def handle_cast({:run, _message, notify}, %{lifecycle: lifecycle} = state)
+      when lifecycle != :running do
+    maybe_notify_waiter(state.id, notify, {:error, :stopped})
     {:noreply, state}
   end
 
@@ -359,49 +371,63 @@ defmodule Orchid.Agent do
     state = %{state | memory: Map.put(state.memory, :task_report_used_in_turn, false)}
     state = add_message(state, :user, message)
     publish_state(state)
-
-    agent_pid = self()
-    agent_id = state.id
-
-    {callback, caller} =
-      case notify do
-        {cb, caller_pid} -> {cb, caller_pid}
-        nil -> {fn _chunk -> :ok end, nil}
-      end
-
-    Task.start(fn ->
-      result =
-        try do
-          case run_agent_loop_streaming(state, callback, 10, agent_pid) do
-            {:ok, response, new_state} ->
-              send(agent_pid, {:work_done, new_state, {:ok, response}})
-              {:ok, response}
-
-            {:error, reason, new_state} ->
-              send(agent_pid, {:work_done, new_state, {:error, reason}})
-              {:error, reason}
-          end
-        rescue
-          e ->
-            Logger.error("Agent #{agent_id} run loop crashed: #{Exception.message(e)}")
-            send(agent_pid, {:work_done, state, {:error, Exception.message(e)}})
-            {:error, Exception.message(e)}
-        end
-
-      if caller, do: send(caller, {:agent_done, agent_id, result})
-    end)
-
+    start_worker(state, notify)
     {:noreply, state}
   end
 
   @impl true
+  def handle_info({:update_status, _status}, %{lifecycle: lifecycle} = state)
+      when lifecycle != :running do
+    {:noreply, state}
+  end
+
   def handle_info({:update_status, status}, state) do
     state = %{state | status: status}
     publish_state(state)
     {:noreply, state}
   end
 
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, %{lifecycle: lifecycle} = state)
+      when lifecycle != :running do
+    {:noreply, state}
+  end
+
+  def handle_info({:DOWN, ref, :process, pid, reason}, state) do
+    runtime = agent_runtime(state.id)
+
+    cond do
+      runtime[:worker_ref] != ref or runtime[:worker_pid] != pid ->
+        {:noreply, state}
+
+      true ->
+        put_runtime(state.id, %{worker_pid: nil, worker_ref: nil})
+
+        new_state =
+          if state.status == :idle do
+            state
+          else
+            %{state | status: :idle}
+          end
+
+        if reason not in [:normal, :shutdown] and not match?({:shutdown, _}, reason) do
+          Logger.error(
+            "Agent #{state.id} worker died before completion: #{truncate(inspect(reason), 800)}"
+          )
+        end
+
+        publish_state(new_state)
+        Store.put_agent_state(new_state.id, new_state)
+        {:noreply, new_state}
+    end
+  end
+
+  def handle_info({:work_done, _new_state, _result}, %{lifecycle: lifecycle} = state)
+      when lifecycle != :running do
+    {:noreply, state}
+  end
+
   def handle_info({:work_done, new_state, result}, state) do
+    clear_worker_runtime(state.id)
     # Preserve notifications that arrived during the Task's execution
     new_state = %{new_state | status: :idle, notifications: state.notifications}
 
@@ -466,7 +492,7 @@ defmodule Orchid.Agent do
             "Agent #{new_state.id} (#{agent_tag}) stopping after error: #{inspect(reason)}"
           )
 
-          {:stop, {:worker_error, truncate(inspect(reason), 800)}, new_state}
+          {:stop, {:shutdown, {:worker_error, truncate(inspect(reason), 800)}}, new_state}
 
         {:ok, _} ->
           cond do
@@ -486,11 +512,49 @@ defmodule Orchid.Agent do
     end
   end
 
+  defp start_worker(state, notify) do
+    agent_pid = self()
+    agent_id = state.id
+
+    {callback, caller} =
+      case notify do
+        {cb, caller_pid} -> {cb, caller_pid}
+        nil -> {fn _chunk -> :ok end, nil}
+      end
+
+    {:ok, worker_pid} =
+      Task.start(fn ->
+        result =
+          try do
+            case run_agent_loop_streaming(state, callback, 10, agent_pid) do
+              {:ok, response, new_state} ->
+                send(agent_pid, {:work_done, new_state, {:ok, response}})
+                {:ok, response}
+
+              {:error, reason, new_state} ->
+                send(agent_pid, {:work_done, new_state, {:error, reason}})
+                {:error, reason}
+            end
+          rescue
+            e ->
+              Logger.error("Agent #{agent_id} run loop crashed: #{Exception.message(e)}")
+              send(agent_pid, {:work_done, state, {:error, Exception.message(e)}})
+              {:error, Exception.message(e)}
+          end
+
+        if caller, do: send(caller, {:agent_done, agent_id, result})
+      end)
+
+    worker_ref = Process.monitor(worker_pid)
+    put_runtime(agent_id, %{worker_pid: worker_pid, worker_ref: worker_ref})
+    :ok
+  end
+
   defp notify_orchestrator_of_failures(state, reason) do
     goals =
       Orchid.Object.list_goals_for_project(state.project_id)
       |> Enum.filter(fn g ->
-        g.metadata[:agent_id] == state.id and g.metadata[:status] != :completed
+        g.metadata[:agent_id] == state.id and Orchid.Goals.open_status?(g.metadata[:status])
       end)
 
     for goal <- goals do
@@ -516,6 +580,8 @@ defmodule Orchid.Agent do
 
   @impl true
   def terminate(reason, state) do
+    stop_worker(state.id)
+    put_runtime(state.id, %{lifecycle: :stopped, worker_pid: nil})
     maybe_notify_creator_on_terminate(reason, state)
     :ets.delete(:orchid_agent_states, state.id)
     Store.delete_agent_state(state.id)
@@ -560,7 +626,7 @@ defmodule Orchid.Agent do
 
     assigned_pending =
       Enum.filter(goals, fn g ->
-        g.metadata[:agent_id] == agent_id and g.metadata[:status] != :completed
+        g.metadata[:agent_id] == agent_id and Orchid.Goals.open_status?(g.metadata[:status])
       end)
 
     for goal <- assigned_pending do
@@ -621,7 +687,7 @@ defmodule Orchid.Agent do
   defp assigned_pending_goals(state) do
     Orchid.Object.list_goals_for_project(state.project_id)
     |> Enum.filter(fn g ->
-      g.metadata[:agent_id] == state.id and g.metadata[:status] != :completed
+      g.metadata[:agent_id] == state.id and Orchid.Goals.open_status?(g.metadata[:status])
     end)
   end
 
@@ -636,15 +702,18 @@ defmodule Orchid.Agent do
         implementation_goal?(g) and (g.metadata[:impl_enforcement_retry_count] || 0) < 1
       end)
 
-    if target_goals != [] and not has_impl_evidence?(tool_delta) do
+    missing = missing_impl_evidence(tool_delta)
+
+    if target_goals != [] and missing != [] do
+      critique = impl_retry_critique(target_goals, missing)
+
       for goal <- target_goals do
         current = goal.metadata[:impl_enforcement_retry_count] || 0
 
         Orchid.Object.update_metadata(goal.id, %{
           impl_enforcement_retry_count: current + 1,
-          completion_summary:
-            "In progress: response lacked required implementation evidence (file edits + build verification).",
-          last_error: "Implementation evidence missing; corrective retry triggered."
+          completion_summary: critique.summary,
+          last_error: critique.error
         })
       end
 
@@ -652,14 +721,14 @@ defmodule Orchid.Agent do
 
       corrective =
         """
-        Your last response did not include required implementation evidence for: #{goal_names}.
+        Critic summary: #{critique.summary}
+        Critic detail: #{critique.error}
 
-        For implementation goals, do this in the SAME run:
-        1) Edit/create the required source files.
-        2) Run a build/verification command and capture result.
-        3) Report concrete file paths changed and command output.
+        Affected goals: #{goal_names}
 
-        Do not stop at analysis or document excerpts.
+        Retry in the same run and provide the missing evidence for these code-change goals:
+        #{Enum.map_join(missing_impl_evidence_instructions(missing), "\n", &"- #{&1}")}
+        Include only the concrete evidence needed to close the gap.
         """
         |> String.trim()
 
@@ -683,11 +752,12 @@ defmodule Orchid.Agent do
         Reviewer summary: #{summary}
         #{if(error, do: "Reviewer error: #{error}", else: "Reviewer error: (none provided)")}
 
-        Retry now with concrete implementation:
-        - make the required source/code changes
-        - run build/verification commands
-        - include exact changed paths and command outputs
+        Retry now by addressing the reviewer feedback against the goal's actual requirements:
+        - provide the concrete evidence or outputs the reviewer says are still missing
+        - if the goal requires code changes, include exact changed paths and build/verification outputs
+        - if the goal is execution, investigation, or evidence capture, include the exact commands, artifact paths, and key output markers
         - if blocked, provide exact failing command and output
+        - do not add boilerplate about unavailable tools
         """
         |> String.trim()
 
@@ -707,15 +777,28 @@ defmodule Orchid.Agent do
   defp implementation_goal?(goal) do
     text = "#{goal.name}\n#{goal.content || ""}" |> String.downcase()
 
-    String.contains?(text, "implement") or
-      String.contains?(text, "create") or
-      String.contains?(text, "add ") or
-      String.contains?(text, "refactor") or
-      String.contains?(text, "cmakelists") or
-      Regex.match?(~r/src\/|\.c\b|\.h\b|\.cpp\b|\.rs\b|\.go\b|\.ex\b|\.js\b/, text)
+    cond do
+      Regex.match?(
+        ~r/\b(without editing source files|without editing source|no source edits|do not edit source(?: files)?)\b/,
+        text
+      ) ->
+        false
+
+      Regex.match?(~r/\b(implement|create|add|refactor|fix|update|modify|write|edit)\b/, text) ->
+        true
+
+      String.contains?(text, "cmakelists") ->
+        true
+
+      Regex.match?(~r/src\/|\.c\b|\.h\b|\.cpp\b|\.rs\b|\.go\b|\.ex\b|\.js\b/, text) ->
+        true
+
+      true ->
+        false
+    end
   end
 
-  defp has_impl_evidence?(tool_delta) do
+  defp missing_impl_evidence(tool_delta) do
     has_edit =
       Enum.any?(tool_delta, fn tr ->
         tr.tool == "edit"
@@ -726,8 +809,42 @@ defmodule Orchid.Agent do
         tr.tool == "shell" and shell_build_command?(tr.args)
       end)
 
-    has_edit and has_build
+    []
+    |> maybe_add_missing_evidence(:file_edits, has_edit)
+    |> maybe_add_missing_evidence(:build_verification, has_build)
   end
+
+  defp maybe_add_missing_evidence(missing, _kind, true), do: missing
+  defp maybe_add_missing_evidence(missing, kind, false), do: missing ++ [kind]
+
+  defp impl_retry_critique(goals, missing) do
+    goal_names = Enum.map_join(goals, ", ", &"\"#{&1.name}\"")
+    missing_text = Enum.map_join(missing, " and ", &missing_impl_evidence_label/1)
+
+    %{
+      summary: "In progress: #{goal_names} is still missing #{missing_text} from the same run.",
+      error: "Missing evidence: #{Enum.map_join(missing, "; ", &missing_impl_evidence_error/1)}."
+    }
+  end
+
+  defp missing_impl_evidence_instructions(missing) do
+    Enum.map(missing, &missing_impl_evidence_instruction/1)
+  end
+
+  defp missing_impl_evidence_label(:file_edits), do: "file edit evidence"
+  defp missing_impl_evidence_label(:build_verification), do: "build or verification output"
+
+  defp missing_impl_evidence_error(:file_edits),
+    do: "no file edit activity was recorded"
+
+  defp missing_impl_evidence_error(:build_verification),
+    do: "no build or verification command result was recorded"
+
+  defp missing_impl_evidence_instruction(:file_edits),
+    do: "make the required source changes and report the exact file paths changed"
+
+  defp missing_impl_evidence_instruction(:build_verification),
+    do: "run at least one build or verification command and report the command plus the result"
 
   defp shell_build_command?(%{"command" => cmd}) when is_binary(cmd) do
     lc = String.downcase(cmd)
@@ -750,7 +867,7 @@ defmodule Orchid.Agent do
 
     assigned_pending =
       Enum.filter(goals, fn g ->
-        g.metadata[:agent_id] == state.id and g.metadata[:status] != :completed
+        g.metadata[:agent_id] == state.id and Orchid.Goals.open_status?(g.metadata[:status])
       end)
 
     if assigned_pending != [] do
@@ -773,14 +890,20 @@ defmodule Orchid.Agent do
     files_text = if files == [], do: "(none)", else: Enum.join(files, "\n")
 
     system = """
-    You are a strict goal completion reviewer.
-    Decide if the submitted work actually completes the goal.
+    You are a practical goal completion reviewer.
+    Decide whether the submitted work completes the goal as written.
+    Judge against the goal's actual acceptance criteria and requested evidence.
+    Do not require source edits, builds, or tests unless the goal explicitly asks for them
+    or they are necessary to prove the requested outcome.
+    If the goal is about execution evidence, logs, commands, artifacts, or investigation,
+    evaluate those directly instead of demanding implementation work.
     Return exactly one JSON object in a single response. Do not call tools.
     Return JSON only with keys:
     - completed (boolean)
     - summary (string, <= 240 chars)
     - error (string or null). If completed=true, set error to null.
-    Be conservative: if evidence is weak or missing, completed must be false.
+    Be concise and evidence-based. If evidence is weak or missing, completed must be false,
+    and error should explain the most important missing proof or unmet criterion.
     """
 
     user = """
@@ -802,15 +925,7 @@ defmodule Orchid.Agent do
       memory: %{}
     }
 
-    config = %{
-      provider: :cli,
-      model: :sonnet,
-      max_tokens: 600,
-      max_turns: 8,
-      disable_tools: true
-    }
-
-    with {:ok, %{content: raw}} <- LLM.chat(config, context),
+    with {:ok, %{content: raw}} <- LLM.chat(@critic_config, context),
          {:ok, decision} <- decode_reviewer_json(raw) do
       {:ok, decision}
     end
@@ -920,6 +1035,9 @@ defmodule Orchid.Agent do
   defp termination_notice({:shutdown, :manual_stop}, state),
     do: termination_notice(:manual_stop, state)
 
+  defp termination_notice({:shutdown, {:worker_error, reason}}, state),
+    do: termination_notice({:worker_error, reason}, state)
+
   defp termination_notice({:worker_error, reason}, state) do
     """
     Agent #{state.id} stopped after an error.
@@ -983,6 +1101,7 @@ defmodule Orchid.Agent do
           GenServer.call(pid, msg, timeout)
         catch
           :exit, {:timeout, _} -> {:error, :timeout}
+          :exit, {:noproc, _} -> {:error, :not_found}
         end
 
       [] ->
@@ -994,6 +1113,103 @@ defmodule Orchid.Agent do
     case Registry.lookup(Orchid.Registry, agent_id) do
       [{pid, _}] -> GenServer.cast(pid, msg)
       [] -> {:error, :not_found}
+    end
+  end
+
+  defp maybe_notify_waiter(agent_id, {_, caller}, result) when is_pid(caller) do
+    send(caller, {:agent_done, agent_id, result})
+  end
+
+  defp maybe_notify_waiter(_agent_id, _notify, _result), do: :ok
+
+  defp agent_runtime(agent_id) do
+    case :ets.lookup(:orchid_agent_runtime, agent_id) do
+      [{^agent_id, runtime}] -> runtime
+      [] -> %{lifecycle: :stopped, worker_pid: nil, worker_ref: nil}
+    end
+  end
+
+  defp agent_runtime_lifecycle(agent_id) do
+    agent_id
+    |> agent_runtime()
+    |> Map.get(:lifecycle, :stopped)
+  end
+
+  defp put_runtime(agent_id, attrs) when is_map(attrs) do
+    runtime =
+      agent_id
+      |> agent_runtime()
+      |> Map.merge(attrs)
+
+    :ets.insert(:orchid_agent_runtime, {agent_id, runtime})
+  end
+
+  defp stop_worker(agent_id) do
+    runtime = agent_runtime(agent_id)
+
+    if is_reference(runtime[:worker_ref]) do
+      Process.demonitor(runtime[:worker_ref], [:flush])
+    end
+
+    case runtime[:worker_pid] do
+      pid when is_pid(pid) and pid != self() ->
+        if Process.alive?(pid), do: Process.exit(pid, :kill)
+
+      _ ->
+        :ok
+    end
+
+    put_runtime(agent_id, %{worker_pid: nil, worker_ref: nil})
+    :ok
+  end
+
+  defp clear_worker_runtime(agent_id) do
+    runtime = agent_runtime(agent_id)
+
+    if is_reference(runtime[:worker_ref]) do
+      Process.demonitor(runtime[:worker_ref], [:flush])
+    end
+
+    put_runtime(agent_id, %{worker_pid: nil, worker_ref: nil})
+  end
+
+  defp wait_until_stopped(_agent_id, attempts_left) when attempts_left <= 0, do: :ok
+
+  defp wait_until_stopped(agent_id, attempts_left) do
+    case Registry.lookup(Orchid.Registry, agent_id) do
+      [] ->
+        :ok
+
+      _ ->
+        Process.sleep(20)
+        wait_until_stopped(agent_id, attempts_left - 1)
+    end
+  end
+
+  defp await_agent_done(_agent_id, timeout_ms) when timeout_ms <= 0, do: {:error, :timeout}
+
+  defp await_agent_done(agent_id, timeout_ms) do
+    wait_ms = min(timeout_ms, 1_000)
+
+    receive do
+      {:agent_done, ^agent_id, result} ->
+        result
+    after
+      wait_ms ->
+        case Registry.lookup(Orchid.Registry, agent_id) do
+          [] -> {:error, :not_found}
+          _ -> await_agent_done(agent_id, timeout_ms - wait_ms)
+        end
+    end
+  end
+
+  defp agent_running?(agent_id), do: agent_runtime_lifecycle(agent_id) == :running
+
+  defp ensure_agent_running(state) do
+    if agent_running?(state.id) do
+      :ok
+    else
+      {:error, :stopped, state}
     end
   end
 
@@ -1029,51 +1245,55 @@ defmodule Orchid.Agent do
   end
 
   defp do_run_loop_streaming(state, callback, iterations_left, _last_response, agent_pid) do
-    context = build_context(state)
-    config = build_llm_config(state)
+    with :ok <- ensure_agent_running(state) do
+      context = build_context(state)
+      config = build_llm_config(state)
 
-    case llm_call_with_retry(config, context, callback, agent_pid) do
-      {:ok, %{content: content, tool_calls: nil}} ->
-        state = add_assistant_message(state, content)
-        publish_state(state)
-        {:ok, content, state}
+      case llm_call_with_retry(config, context, callback, agent_pid) do
+        {:ok, %{content: content, tool_calls: nil}} ->
+          state = add_assistant_message(state, content)
+          publish_state(state)
+          {:ok, content, state}
 
-      {:ok, %{content: content, tool_calls: tool_calls}} when is_list(tool_calls) ->
-        state = add_assistant_message(state, content, tool_calls)
-        tool_names = Enum.map_join(tool_calls, ", ", & &1.name)
-        state = %{state | status: {:executing_tool, tool_names}}
-        publish_state(state)
+        {:ok, %{content: content, tool_calls: tool_calls}} when is_list(tool_calls) ->
+          state = add_assistant_message(state, content, tool_calls)
+          tool_names = Enum.map_join(tool_calls, ", ", & &1.name)
+          state = %{state | status: {:executing_tool, tool_names}}
+          publish_state(state)
 
-        {state, tool_results} = execute_tool_calls(state, tool_calls)
+          case execute_tool_calls(state, tool_calls) do
+            {:ok, state, tool_results} ->
+              {notifications, tool_results} =
+                Enum.reduce(tool_results, {[], []}, fn result, {notifs, results} ->
+                  case result do
+                    {:notifications, msgs, formatted} -> {notifs ++ msgs, results ++ [formatted]}
+                    _ -> {notifs, results ++ [result]}
+                  end
+                end)
 
-        # Separate out notifications collected by wait tool
-        {notifications, tool_results} =
-          Enum.reduce(tool_results, {[], []}, fn result, {notifs, results} ->
-            case result do
-              {:notifications, msgs, formatted} -> {notifs ++ msgs, results ++ [formatted]}
-              _ -> {notifs, results ++ [result]}
-            end
-          end)
+              state =
+                Enum.reduce(tool_results, state, fn result, acc ->
+                  add_message(acc, :tool, result)
+                end)
 
-        state =
-          Enum.reduce(tool_results, state, fn result, acc ->
-            add_message(acc, :tool, result)
-          end)
+              state =
+                if notifications != [] do
+                  notif_text = Enum.join(notifications, "\n\n---\n\n")
+                  add_message(state, :user, notif_text)
+                else
+                  state
+                end
 
-        # Inject notifications as a user message so the LLM sees them naturally
-        state =
-          if notifications != [] do
-            notif_text = Enum.join(notifications, "\n\n---\n\n")
-            add_message(state, :user, notif_text)
-          else
-            state
+              publish_state(state)
+              do_run_loop_streaming(state, callback, iterations_left - 1, content, agent_pid)
+
+            {:error, :stopped, state} ->
+              {:error, :stopped, state}
           end
 
-        publish_state(state)
-        do_run_loop_streaming(state, callback, iterations_left - 1, content, agent_pid)
-
-      {:error, reason} ->
-        {:error, reason, state}
+        {:error, reason} ->
+          {:error, reason, state}
+      end
     end
   end
 
@@ -1083,48 +1303,66 @@ defmodule Orchid.Agent do
 
   defp do_llm_retry(config, context, callback, attempt, _agent_pid)
        when attempt >= @max_retries do
-    LLM.chat_stream(config, context, callback)
+    if agent_running?(config[:agent_id]) do
+      LLM.chat_stream(config, context, callback)
+    else
+      {:error, :stopped}
+    end
   end
 
   defp do_llm_retry(config, context, callback, attempt, agent_pid) do
-    case LLM.chat_stream(config, context, callback) do
-      {:ok, _} = success ->
-        success
+    if not agent_running?(config[:agent_id]) do
+      {:error, :stopped}
+    else
+      case LLM.chat_stream(config, context, callback) do
+        {:ok, _} = success ->
+          success
 
-      {:error, "Codex returned empty response"} ->
-        backoff = min((@initial_backoff * :math.pow(2, attempt)) |> round(), 30_000)
+        {:error, "Codex returned empty response"} ->
+          backoff = min((@initial_backoff * :math.pow(2, attempt)) |> round(), 30_000)
 
-        Logger.warning(
-          "Agent LLM call returned empty response, retry #{attempt + 1}/#{@max_retries} in #{backoff}ms"
-        )
+          Logger.warning(
+            "Agent LLM call returned empty response, retry #{attempt + 1}/#{@max_retries} in #{backoff}ms"
+          )
 
-        if agent_pid,
-          do:
-            send(
-              agent_pid,
-              {:update_status, {:retrying, attempt + 1, @max_retries, :empty_response}}
-            )
+          if agent_pid,
+            do:
+              send(
+                agent_pid,
+                {:update_status, {:retrying, attempt + 1, @max_retries, :empty_response}}
+              )
 
-        Process.sleep(backoff)
-        if agent_pid, do: send(agent_pid, {:update_status, :thinking})
-        do_llm_retry(config, context, callback, attempt + 1, agent_pid)
+          Process.sleep(backoff)
 
-      {:error, {:api_error, status, _}} when status in [429, 500, 502, 503, 504] ->
-        backoff = min((@initial_backoff * :math.pow(2, attempt)) |> round(), 30_000)
+          if agent_running?(config[:agent_id]) do
+            if agent_pid, do: send(agent_pid, {:update_status, :thinking})
+            do_llm_retry(config, context, callback, attempt + 1, agent_pid)
+          else
+            {:error, :stopped}
+          end
 
-        Logger.warning(
-          "Agent LLM call failed (#{status}), retry #{attempt + 1}/#{@max_retries} in #{backoff}ms"
-        )
+        {:error, {:api_error, status, _}} when status in [429, 500, 502, 503, 504] ->
+          backoff = min((@initial_backoff * :math.pow(2, attempt)) |> round(), 30_000)
 
-        if agent_pid,
-          do: send(agent_pid, {:update_status, {:retrying, attempt + 1, @max_retries, status}})
+          Logger.warning(
+            "Agent LLM call failed (#{status}), retry #{attempt + 1}/#{@max_retries} in #{backoff}ms"
+          )
 
-        Process.sleep(backoff)
-        if agent_pid, do: send(agent_pid, {:update_status, :thinking})
-        do_llm_retry(config, context, callback, attempt + 1, agent_pid)
+          if agent_pid,
+            do: send(agent_pid, {:update_status, {:retrying, attempt + 1, @max_retries, status}})
 
-      {:error, _} = error ->
-        error
+          Process.sleep(backoff)
+
+          if agent_running?(config[:agent_id]) do
+            if agent_pid, do: send(agent_pid, {:update_status, :thinking})
+            do_llm_retry(config, context, callback, attempt + 1, agent_pid)
+          else
+            {:error, :stopped}
+          end
+
+        {:error, _} = error ->
+          error
+      end
     end
   end
 
@@ -1155,9 +1393,13 @@ defmodule Orchid.Agent do
   end
 
   defp execute_tool_calls(state, tool_calls) do
-    Enum.reduce(tool_calls, {state, []}, fn tool_call, {acc_state, results} ->
-      {new_state, result} = execute_tool(acc_state, tool_call)
-      {new_state, results ++ [result]}
+    Enum.reduce_while(tool_calls, {:ok, state, []}, fn tool_call, {:ok, acc_state, results} ->
+      if agent_running?(acc_state.id) do
+        {new_state, result} = execute_tool(acc_state, tool_call)
+        {:cont, {:ok, new_state, results ++ [result]}}
+      else
+        {:halt, {:error, :stopped, acc_state}}
+      end
     end)
   end
 

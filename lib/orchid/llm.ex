@@ -8,7 +8,7 @@ defmodule Orchid.LLM do
   - :anthropic - Direct API calls (pay per token, needs ANTHROPIC_API_KEY)
   """
 
-  alias Orchid.LLM.{Anthropic, OAuth, CLI, Codex, Gemini, Cerebras, OpenRouter}
+  alias Orchid.LLM.{Anthropic, OAuth, CLI, Codex, Gemini, Cerebras, OpenRouter, Catalog}
 
   @doc """
   Send a chat request to the configured LLM provider.
@@ -56,16 +56,8 @@ defmodule Orchid.LLM do
     end
   end
 
-  @gemini_models [:gemini_pro, :gemini_flash, :gemini_flash_image, :gemini_3_flash, :gemini_3_pro]
-  @cerebras_models [:llama_3_1_8b, :llama_3_3_70b, :gpt_oss_120b, :qwen_3_32b, :qwen_3_235b, :zai_glm_4_7]
-  @openrouter_models [:minimax_m2_5, :glm_5, :kimi_k2_5]
-
   defp resolve_provider(config) do
-    cond do
-      config[:model] in @gemini_models -> :gemini
-      config[:model] in @cerebras_models -> :cerebras
-      config[:model] in @openrouter_models -> :openrouter
-      true -> config[:provider] || :cli
-    end
+    Catalog.provider_for_model(config[:model]) || Catalog.normalize_provider(config[:provider]) ||
+      :cli
   end
 end

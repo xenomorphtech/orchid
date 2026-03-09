@@ -4,16 +4,11 @@ defmodule Orchid.LLM.OAuth do
   Requires .claude_tokens.json in project root (same format as query_claude.js).
   """
   require Logger
+  alias Orchid.LLM.Catalog
 
   @api_url "https://api.anthropic.com/v1/messages?beta=true"
 
-  @models %{
-    sonnet: "claude-sonnet-4-20250514",
-    haiku: "claude-haiku-4-5-20251001",
-    opus: "claude-opus-4-5-20251101"
-  }
-
-  def models, do: @models
+  def models, do: Catalog.model_map(:oauth)
 
   @doc """
   Send a chat request using OAuth tokens.
@@ -131,7 +126,7 @@ defmodule Orchid.LLM.OAuth do
   @default_system "You are Claude Code, Anthropic's official CLI for Claude."
 
   defp build_request_body(config, context, stream) do
-    model = Map.get(@models, config[:model]) || config[:model] || @models.sonnet
+    model = Catalog.resolve_model(config[:model], :oauth)
     messages = format_messages(context.messages)
 
     # OAuth tokens require exact Claude Code system prompt

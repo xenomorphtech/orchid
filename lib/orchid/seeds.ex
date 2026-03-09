@@ -84,11 +84,18 @@ defmodule Orchid.Seeds do
     - Unless the orchestrator explicitly asks for verbose output in the goal, keep output concise.
     - If findings/results are large, write full details to a file and return a short summary plus the file path.
     - When the task is finished, end with a clear final report: what changed, validation run (tests/commands), and final status.
+    - Completion reports must stay concise: do not dump long file lists or copy large code blocks verbatim.
     - Keep responses concise. No emojis unless the user requests them.
     - Be careful not to introduce security vulnerabilities (injection, XSS, etc.).
     """
 
-    metadata = %{model: :opus, provider: :cli, category: "Coding"}
+    metadata = %{
+      model: :gpt54,
+      model_reasoning_effort: "high",
+      provider: :codex,
+      category: "Coding"
+    }
+
     {"Coder", String.trim(prompt), metadata}
   end
 
@@ -414,12 +421,9 @@ defmodule Orchid.Seeds do
     - `read` — Read a file for context
     - `grep` — Search files for patterns
 
-    ## Context
-    Current objectives:
-    {goals list}
     """
 
-    metadata = %{model: :gpt53, provider: :codex, use_orchid_tools: true, category: "Planning"}
+    metadata = %{model: :gpt54, provider: :codex, use_orchid_tools: true, category: "Planning"}
     {"Planner", String.trim(prompt), metadata}
   end
 
@@ -464,8 +468,9 @@ defmodule Orchid.Seeds do
     """
 
     metadata = %{
-      model: :opus,
-      provider: :cli,
+      model: :gpt54,
+      model_reasoning_effort: "xhigh",
+      provider: :codex,
       use_orchid_tools: true,
       category: "Operations",
       allowed_tools: [

@@ -119,33 +119,35 @@ defmodule OrchidMCP do
     if not tool_allowed?(state, name) do
       {:ok,
        %{
-         "content" => [%{"type" => "text", "text" => "Error: tool not allowed for this agent: #{name}"}],
+         "content" => [
+           %{"type" => "text", "text" => "Error: tool not allowed for this agent: #{name}"}
+         ],
          "isError" => true
        }}
     else
-    started = System.monotonic_time(:millisecond)
-    request_id = Map.get(params, "request_id")
-    log("TOOL CALL: #{name}(#{inspect(args) |> String.slice(0, 300)})")
-    result = execute_tool(name, args, state)
+      started = System.monotonic_time(:millisecond)
+      request_id = Map.get(params, "request_id")
+      log("TOOL CALL: #{name}(#{inspect(args) |> String.slice(0, 300)})")
+      result = execute_tool(name, args, state)
 
-    case result do
-      {:ok, text} ->
-        emit_call_event(state, name, request_id, "ok", started)
-        log("TOOL OK: #{name} -> #{String.slice(to_string(text), 0, 200)}")
+      case result do
+        {:ok, text} ->
+          emit_call_event(state, name, request_id, "ok", started)
+          log("TOOL OK: #{name} -> #{String.slice(to_string(text), 0, 200)}")
 
-        {:ok,
-         %{"content" => [%{"type" => "text", "text" => to_string(text)}], "isError" => false}}
+          {:ok,
+           %{"content" => [%{"type" => "text", "text" => to_string(text)}], "isError" => false}}
 
-      {:error, err} ->
-        emit_call_event(state, name, request_id, "error", started)
-        log("TOOL ERROR: #{name} -> #{inspect(err) |> String.slice(0, 200)}")
+        {:error, err} ->
+          emit_call_event(state, name, request_id, "error", started)
+          log("TOOL ERROR: #{name} -> #{inspect(err) |> String.slice(0, 200)}")
 
-        {:ok,
-         %{
-           "content" => [%{"type" => "text", "text" => "Error: #{inspect(err)}"}],
-           "isError" => true
-         }}
-    end
+          {:ok,
+           %{
+             "content" => [%{"type" => "text", "text" => "Error: #{inspect(err)}"}],
+             "isError" => true
+           }}
+      end
     end
   end
 
@@ -665,11 +667,13 @@ defmodule OrchidMCP do
 
   defp execute_tool("agent_spawn", %{"template" => _template} = args, state) do
     # Call Orchid's agent_spawn tool
-    ctx = %{agent_state: %{project_id: state.project_id, id: state.agent_id}}
+    ctx = %{agent_state: agent_spawn_context(state)}
 
     case :rpc.call(@node, Orchid.Tools.AgentSpawn, :execute, [args, ctx]) do
       {:ok, result} -> {:ok, result}
       {:error, reason} -> {:error, reason}
+      {:badrpc, reason} -> {:error, "agent_spawn RPC failed: #{inspect(reason)}"}
+      other -> {:error, "agent_spawn returned unexpected result: #{inspect(other)}"}
     end
   end
 
@@ -887,6 +891,21 @@ defmodule OrchidMCP do
       {:ok, s} -> s.config[:allowed_tools]
       _ -> nil
     end
+  end
+
+  defp agent_spawn_context(%{agent_id: agent_id, project_id: project_id})
+       when is_binary(agent_id) do
+    case :rpc.call(@node, Orchid.Agent, :get_state, [agent_id]) do
+      {:ok, agent_state} ->
+        agent_state
+
+      _ ->
+        %{id: agent_id, project_id: project_id, execution_mode: :vm}
+    end
+  end
+
+  defp agent_spawn_context(%{project_id: project_id}) do
+    %{id: nil, project_id: project_id, execution_mode: :vm}
   end
 
   defp wait_loop(agent_id, deadline) do

@@ -7,7 +7,7 @@ defmodule Orchid.LLM.Aletheia do
 
   @default_config %{
     provider: :codex,
-    model: :gpt53,
+    model: :gpt54,
     disable_tools: true,
     max_turns: 1,
     max_tokens: 1_800
@@ -236,8 +236,11 @@ defmodule Orchid.LLM.Aletheia do
     end
   end
 
-  defp extract_paths(%{"plans" => _}, _num_paths), do: {:error, "`plans` must be an array of strings"}
-  defp extract_paths(_decoded, _num_paths), do: {:error, "response must be a JSON object with key `plans`"}
+  defp extract_paths(%{"plans" => _}, _num_paths),
+    do: {:error, "`plans` must be an array of strings"}
+
+  defp extract_paths(_decoded, _num_paths),
+    do: {:error, "response must be a JSON object with key `plans`"}
 
   defp workspace_context(nil, _overlay), do: "(project not set)"
 

@@ -55,13 +55,19 @@ defmodule Orchid.Tools.AgentSpawn do
           template_id: template.id,
           project_id: project_id,
           creator_agent_id: state.id,
-          execution_mode: state.execution_mode || :vm
+          execution_mode: Map.get(state, :execution_mode) || :vm
         }
 
         # Only set model if template specifies one — providers have their own defaults
         config =
           if template.metadata[:model],
             do: Map.put(config, :model, template.metadata[:model]),
+            else: config
+
+        config =
+          if template.metadata[:model_reasoning_effort],
+            do:
+              Map.put(config, :model_reasoning_effort, template.metadata[:model_reasoning_effort]),
             else: config
 
         config =

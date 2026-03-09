@@ -1,6 +1,13 @@
 defmodule OrchidWeb.AgentLive do
   use Phoenix.LiveView
 
+  alias Orchid.{ProjectIntake, LLM.Catalog}
+
+  @active_poll_interval_ms 1_500
+  @idle_poll_interval_ms 5_000
+  @server_log_tail_lines 80
+  @server_log_tail_chunk_bytes 16_384
+
   @impl true
   def mount(params, _session, socket) do
     agent_id = params["id"]
@@ -10,6 +17,7 @@ defmodule OrchidWeb.AgentLive do
       |> assign(:agents, list_agents_with_info())
       |> assign(:current_agent, agent_id)
       |> assign(:messages, [])
+      |> assign(:message_fingerprint, nil)
       |> assign(:input, "")
       |> assign(:streaming, false)
       |> assign(:stream_content, "")
@@ -20,8 +28,25 @@ defmodule OrchidWeb.AgentLive do
       |> assign(:projects, Orchid.Object.list_projects())
       |> assign(:project_query, "")
       |> assign(:current_project, nil)
-      |> assign(:creating_project, false)
-      |> assign(:new_project_name, "")
+      |> assign(:project_workspace_mode, :project)
+      |> assign(:project_tab, :overview)
+      |> assign(:new_project_form, default_new_project_form(nil, :vm))
+      |> assign(:new_project_errors, %{})
+      |> assign(:new_project_chat_messages, [])
+      |> assign(:new_project_chat_input, "")
+      |> assign(:new_project_chat_running, false)
+      |> assign(:new_project_chat_request_id, nil)
+      |> assign(:new_project_ready_to_submit, false)
+      |> assign(
+        :new_project_missing_fields,
+        ProjectIntake.missing_fields(default_new_project_form(nil, :vm))
+      )
+      |> assign(
+        :new_project_chat_focus,
+        ProjectIntake.next_focus(default_new_project_form(nil, :vm))
+      )
+      |> assign(:new_project_return_project, nil)
+      |> assign(:new_project_return_tab, :overview)
       |> assign(:goals, [])
       |> assign(:creating_goal, false)
       |> assign(:new_goal_name, "")
@@ -33,7 +58,8 @@ defmodule OrchidWeb.AgentLive do
       |> assign(:assigning_goal, nil)
       |> assign(:goals_view_mode, :list)
       |> assign(:hide_completed_goals, false)
-      |> assign(:project_tab, :goals)
+      |> assign(:show_diagnostics, false)
+      |> clear_diagnostics()
       |> assign(:decomp_goal_text, "")
       |> assign(:decomp_num_paths, 3)
       |> assign(:decomp_max_iterations, 3)
@@ -41,11 +67,18 @@ defmodule OrchidWeb.AgentLive do
       |> assign(:decomp_running, false)
       |> assign(:decomp_result, nil)
       |> assign(:decomp_error, nil)
+      |> assign(:template_provider_options, Catalog.providers(context: :template))
+      |> assign(:template_model_options, Catalog.models(context: :template))
+      |> assign(:decomp_model_options, Catalog.models(context: :decomp))
       |> assign(:templates, Orchid.Object.list_agent_templates())
       |> then(fn s ->
         templates = s.assigns.templates
         first_template = List.first(templates)
-        assign(s, :selected_template, first_template && first_template.id)
+        default_template_id = first_template && first_template.id
+
+        s
+        |> assign(:selected_template, default_template_id)
+        |> reset_new_project_draft(default_template_id, s.assigns.agent_execution_mode)
       end)
       |> assign(:current_agent_template, nil)
       |> assign(:creating_template, false)
@@ -70,15 +103,14 @@ defmodule OrchidWeb.AgentLive do
 
             socket
             |> assign(:messages, format_messages(state.messages))
+            |> assign(:message_fingerprint, message_fingerprint(state.messages))
             |> assign(:agent_status, state.status)
             |> assign(:agent_wait_status, wait_status_from_memory(state.memory))
             |> assign(:system_prompt, state.config[:system_prompt])
             |> assign(:current_agent_template, template_info)
             |> then(fn s ->
               if state.project_id do
-                s
-                |> assign(:current_project, state.project_id)
-                |> assign(:goals, Orchid.Goals.list_for_project(state.project_id))
+                select_project_workspace(s, state.project_id)
               else
                 s
               end
@@ -93,7 +125,7 @@ defmodule OrchidWeb.AgentLive do
 
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Orchid.PubSub, "mcp_calls")
-      Process.send_after(self(), :poll_agent_status, 2000)
+      schedule_poll(socket)
     end
 
     {:ok, socket}
@@ -108,6 +140,7 @@ defmodule OrchidWeb.AgentLive do
   @impl true
   def handle_params(params, _uri, socket) do
     agent_id = params["id"]
+    new_project? = truthy_param?(params["new_project"])
 
     socket =
       socket
@@ -122,6 +155,7 @@ defmodule OrchidWeb.AgentLive do
 
             socket
             |> assign(:messages, format_messages(state.messages))
+            |> assign(:message_fingerprint, message_fingerprint(state.messages))
             |> assign(:agent_status, state.status)
             |> assign(:agent_wait_status, wait_status_from_memory(state.memory))
             |> assign(:current_agent_template, template_info)
@@ -129,9 +163,7 @@ defmodule OrchidWeb.AgentLive do
             |> assign(:show_system_prompt, false)
             |> then(fn s ->
               if state.project_id do
-                s
-                |> assign(:current_project, state.project_id)
-                |> assign(:goals, Orchid.Goals.list_for_project(state.project_id))
+                select_project_workspace(s, state.project_id)
               else
                 s
               end
@@ -140,6 +172,7 @@ defmodule OrchidWeb.AgentLive do
           _ ->
             socket
             |> assign(:messages, [])
+            |> assign(:message_fingerprint, nil)
             |> assign(:agent_status, :idle)
             |> assign(:agent_wait_status, nil)
             |> assign(:current_agent_template, nil)
@@ -149,11 +182,18 @@ defmodule OrchidWeb.AgentLive do
       else
         socket
         |> assign(:messages, [])
+        |> assign(:message_fingerprint, nil)
         |> assign(:agent_status, :idle)
         |> assign(:agent_wait_status, nil)
         |> assign(:current_agent_template, nil)
         |> assign(:system_prompt, nil)
         |> assign(:show_system_prompt, false)
+      end
+
+    socket =
+      cond do
+        new_project? -> open_new_project_workspace(socket)
+        true -> assign(socket, :project_workspace_mode, :project)
       end
 
     {:noreply, socket}
@@ -164,11 +204,14 @@ defmodule OrchidWeb.AgentLive do
   defp get_template_info(template_id) do
     case Orchid.Object.get(template_id) do
       {:ok, template} ->
+        provider = Catalog.normalize_provider(template.metadata[:provider])
+        model = Catalog.normalize_model(template.metadata[:model])
+
         %{
           id: template.id,
           name: template.name,
-          model: template.metadata[:model],
-          provider: template.metadata[:provider],
+          model: Catalog.model_label(model),
+          provider: Catalog.provider_label(provider),
           category: template.metadata[:category] || "General",
           use_orchid_tools: template.metadata[:use_orchid_tools] || false
         }
@@ -195,6 +238,16 @@ defmodule OrchidWeb.AgentLive do
           config =
             if template.metadata[:model],
               do: Map.put(config, :model, template.metadata[:model]),
+              else: config
+
+          config =
+            if template.metadata[:model_reasoning_effort],
+              do:
+                Map.put(
+                  config,
+                  :model_reasoning_effort,
+                  template.metadata[:model_reasoning_effort]
+                ),
               else: config
 
           config =
@@ -244,11 +297,11 @@ defmodule OrchidWeb.AgentLive do
   end
 
   def handle_event("update_model", %{"model" => model}, socket) do
-    {:noreply, assign(socket, :model, String.to_existing_atom(model))}
+    {:noreply, assign(socket, :model, parse_model(model, socket.assigns.model))}
   end
 
   def handle_event("update_provider", %{"provider" => provider}, socket) do
-    {:noreply, assign(socket, :provider, String.to_existing_atom(provider))}
+    {:noreply, assign(socket, :provider, parse_provider(provider, socket.assigns.provider))}
   end
 
   def handle_event("update_agent_execution_mode", %{"mode" => mode}, socket) do
@@ -262,8 +315,8 @@ defmodule OrchidWeb.AgentLive do
         {:ok, template} ->
           socket
           |> assign(:selected_template, id)
-          |> assign(:model, template.metadata[:model])
-          |> assign(:provider, template.metadata[:provider] || :cli)
+          |> assign(:model, parse_model(template.metadata[:model], socket.assigns.model))
+          |> assign(:provider, parse_provider(template.metadata[:provider], :cli))
 
         _ ->
           socket
@@ -283,8 +336,8 @@ defmodule OrchidWeb.AgentLive do
           case Orchid.Object.get(template_id) do
             {:ok, template} ->
               {
-                template.metadata[:model],
-                template.metadata[:provider] || :cli,
+                parse_model(template.metadata[:model], socket.assigns.model),
+                parse_provider(template.metadata[:provider], :cli),
                 template.content || "",
                 template.metadata[:use_orchid_tools] || false
               }
@@ -319,11 +372,16 @@ defmodule OrchidWeb.AgentLive do
   end
 
   def handle_event("update_template_model", %{"model" => model}, socket) do
-    {:noreply, assign(socket, :template_model, String.to_existing_atom(model))}
+    {:noreply, assign(socket, :template_model, parse_model(model, socket.assigns.template_model))}
   end
 
   def handle_event("update_template_provider", %{"provider" => provider}, socket) do
-    {:noreply, assign(socket, :template_provider, String.to_existing_atom(provider))}
+    {:noreply,
+     assign(
+       socket,
+       :template_provider,
+       parse_provider(provider, socket.assigns.template_provider)
+     )}
   end
 
   def handle_event("update_template_system_prompt", %{"prompt" => prompt}, socket) do
@@ -393,52 +451,152 @@ defmodule OrchidWeb.AgentLive do
   end
 
   def handle_event("select_project", %{"id" => id}, socket) do
-    {:noreply,
-     socket
-     |> assign(:current_project, id)
-     |> assign(:project_tab, :goals)
-     |> assign(:goals, Orchid.Goals.list_for_project(id))
-     |> assign(:mcp_calls, recent_mcp_calls(id, 40))
-     |> assign(:decomp_result, nil)
-     |> assign(:decomp_error, nil)
-     |> refresh_sandbox_statuses()}
+    from_new_project? =
+      socket.assigns.project_workspace_mode == :new_project and
+        is_nil(socket.assigns.current_agent)
+
+    socket = select_project_workspace(socket, id)
+    socket = if from_new_project?, do: push_patch(socket, to: "/"), else: socket
+    {:noreply, socket}
   end
 
   def handle_event("clear_project", _params, socket) do
     {:noreply,
      socket
+     |> assign(:project_workspace_mode, :project)
      |> assign(:current_project, nil)
      |> assign(:goals, [])
+     |> assign(:project_tab, :overview)
+     |> assign(:decomp_result, nil)
+     |> assign(:decomp_error, nil)
+     |> refresh_sandbox_statuses()
      |> assign(:mcp_calls, recent_mcp_calls(nil, 40))}
   end
 
   def handle_event("show_new_project", _params, socket) do
-    {:noreply, assign(socket, creating_project: true, new_project_name: "")}
+    socket =
+      socket
+      |> open_new_project_workspace()
+      |> push_patch(to: "/?new_project=1")
+
+    {:noreply, socket}
   end
 
   def handle_event("cancel_new_project", _params, socket) do
-    {:noreply, assign(socket, creating_project: false)}
+    return_project = socket.assigns.new_project_return_project
+    return_tab = socket.assigns.new_project_return_tab || :overview
+
+    socket =
+      socket
+      |> assign(:project_workspace_mode, :project)
+      |> reset_new_project_draft(
+        socket.assigns.selected_template,
+        socket.assigns.agent_execution_mode
+      )
+      |> assign(:new_project_return_project, nil)
+      |> assign(:new_project_return_tab, :overview)
+      |> then(fn s ->
+        if return_project do
+          select_project_workspace(s, return_project, tab: return_tab)
+        else
+          s
+          |> assign(:current_project, nil)
+          |> assign(:goals, [])
+          |> assign(:project_tab, :overview)
+          |> assign(:mcp_calls, recent_mcp_calls(nil, 40))
+          |> refresh_sandbox_statuses()
+        end
+      end)
+      |> push_patch(to: "/")
+
+    {:noreply, socket}
   end
 
-  def handle_event("update_new_project_name", %{"name" => name}, socket) do
-    {:noreply, assign(socket, :new_project_name, name)}
+  def handle_event("update_new_project_form", %{"project" => attrs}, socket) do
+    form = merge_new_project_form(socket.assigns.new_project_form, attrs)
+
+    {:noreply, socket |> assign_new_project_form_state(form)}
   end
 
-  def handle_event("create_project", _params, socket) do
-    name = String.trim(socket.assigns.new_project_name)
+  def handle_event("update_new_project_chat_input", %{"input" => input}, socket) do
+    {:noreply, assign(socket, :new_project_chat_input, input)}
+  end
 
-    if name != "" do
-      {:ok, project} = Orchid.Projects.create(name)
+  def handle_event("send_new_project_chat", params, socket) do
+    input =
+      params
+      |> Map.get("input", socket.assigns.new_project_chat_input)
+      |> to_string()
+      |> String.trim()
 
-      {:noreply,
-       assign(socket,
-         projects: Orchid.Object.list_projects(),
-         creating_project: false,
-         new_project_name: "",
-         current_project: project.id
-       )}
-    else
-      {:noreply, socket}
+    cond do
+      input == "" ->
+        {:noreply, socket}
+
+      socket.assigns.new_project_chat_running ->
+        {:noreply, socket}
+
+      true ->
+        request_id = make_ref()
+        pid = self()
+        messages = socket.assigns.new_project_chat_messages
+        form = socket.assigns.new_project_form
+        focus = socket.assigns.new_project_chat_focus
+
+        Task.start(fn ->
+          result = ProjectIntake.continue(messages, form, input, focus)
+          send(pid, {:new_project_chat_reply, request_id, input, result})
+        end)
+
+        updated_messages = messages ++ [%{role: :user, content: input}]
+
+        {:noreply,
+         socket
+         |> assign(:new_project_chat_messages, updated_messages)
+         |> assign(:new_project_chat_input, "")
+         |> assign(:new_project_chat_running, true)
+         |> assign(:new_project_chat_request_id, request_id)}
+    end
+  end
+
+  def handle_event("create_project", params, socket) do
+    form =
+      socket.assigns.new_project_form
+      |> merge_new_project_form(Map.get(params, "project", %{}))
+
+    attrs = project_create_attrs(form, socket.assigns.new_project_chat_messages)
+
+    case Orchid.Projects.create(attrs) do
+      {:ok, project} ->
+        socket =
+          socket
+          |> assign(:projects, Orchid.Object.list_projects())
+          |> reset_new_project_draft(
+            socket.assigns.selected_template,
+            socket.assigns.agent_execution_mode
+          )
+          |> assign(:new_project_return_project, nil)
+          |> assign(:new_project_return_tab, :overview)
+          |> select_project_workspace(project.id)
+          |> push_patch(to: "/")
+
+        {:noreply, socket}
+
+      {:error, errors} when is_map(errors) ->
+        {:noreply,
+         socket
+         |> assign(:project_workspace_mode, :new_project)
+         |> assign_new_project_form_state(form)
+         |> assign(:new_project_errors, errors)}
+
+      {:error, _reason} ->
+        {:noreply,
+         socket
+         |> assign(:project_workspace_mode, :new_project)
+         |> assign(
+           :new_project_errors,
+           %{general: "Unable to create project. Check the form and try again."}
+         )}
     end
   end
 
@@ -450,7 +608,19 @@ defmodule OrchidWeb.AgentLive do
       |> assign(:projects, Orchid.Object.list_projects())
       |> then(fn s ->
         if s.assigns.current_project == id do
-          assign(s, :current_project, nil)
+          s
+          |> assign(:current_project, nil)
+          |> assign(:goals, [])
+          |> assign(:project_tab, :overview)
+          |> assign(:mcp_calls, recent_mcp_calls(nil, 40))
+          |> refresh_sandbox_statuses()
+        else
+          s
+        end
+      end)
+      |> then(fn s ->
+        if s.assigns.new_project_return_project == id do
+          assign(s, :new_project_return_project, nil)
         else
           s
         end
@@ -612,11 +782,25 @@ defmodule OrchidWeb.AgentLive do
   def handle_event("set_project_tab", %{"tab" => tab}, socket) do
     project_tab =
       case tab do
+        "overview" -> :overview
         "decomposition" -> :decomposition
         _ -> :goals
       end
 
     {:noreply, assign(socket, :project_tab, project_tab)}
+  end
+
+  def handle_event("toggle_diagnostics", _params, socket) do
+    socket =
+      socket
+      |> assign(:show_diagnostics, !socket.assigns.show_diagnostics)
+      |> maybe_refresh_diagnostics()
+
+    {:noreply, socket}
+  end
+
+  def handle_event("refresh_diagnostics", _params, socket) do
+    {:noreply, refresh_diagnostics(socket)}
   end
 
   def handle_event("update_decomp_goal", %{"goal" => goal}, socket) do
@@ -632,15 +816,20 @@ defmodule OrchidWeb.AgentLive do
   end
 
   def handle_event("update_decomp_model", %{"model" => model}, socket) do
-    {:noreply, assign(socket, :decomp_model, parse_decomp_model(model))}
+    {:noreply, assign(socket, :decomp_model, parse_model(model, socket.assigns.decomp_model))}
   end
 
   def handle_event("run_decomposition_test", params, socket) do
     project_id = socket.assigns.current_project
     objective = String.trim(params["goal"] || socket.assigns.decomp_goal_text || "")
-    model = parse_decomp_model(params["model"] || Atom.to_string(socket.assigns.decomp_model))
+
+    model =
+      parse_model(params["model"] || socket.assigns.decomp_model, socket.assigns.decomp_model)
+
     num_paths = clamp_int(params["num_paths"], socket.assigns.decomp_num_paths, 1, 8)
-    max_iterations = clamp_int(params["max_iterations"], socket.assigns.decomp_max_iterations, 0, 6)
+
+    max_iterations =
+      clamp_int(params["max_iterations"], socket.assigns.decomp_max_iterations, 0, 6)
 
     cond do
       socket.assigns.decomp_running ->
@@ -693,7 +882,12 @@ defmodule OrchidWeb.AgentLive do
             end
 
           duration_ms = System.monotonic_time(:millisecond) - started_ms
-          send(pid, {:decomposition_test_done, result, raw_output, duration_ms, model, num_paths, max_iterations})
+
+          send(
+            pid,
+            {:decomposition_test_done, result, raw_output, duration_ms, model, num_paths,
+             max_iterations}
+          )
         end)
 
         {:noreply, socket}
@@ -756,29 +950,14 @@ defmodule OrchidWeb.AgentLive do
     end
   end
 
-  def handle_event("send_message", _params, socket) do
-    input = String.trim(socket.assigns.input)
+  def handle_event("send_message", params, socket) do
+    input =
+      params
+      |> Map.get("input", socket.assigns.input)
+      |> to_string()
+      |> String.trim()
 
-    if input == "" or socket.assigns.streaming do
-      {:noreply, socket}
-    else
-      agent_id = socket.assigns.current_agent
-
-      # Add user message to list immediately so it shows in chat
-      messages = socket.assigns.messages ++ [%{role: :user, content: input, tool_calls: nil}]
-
-      socket =
-        socket
-        |> assign(:messages, messages)
-        |> assign(:pending_message, input)
-        |> assign(:input, "")
-        |> assign(:streaming, true)
-        |> assign(:stream_content, "")
-        |> assign(:retry_count, 0)
-
-      start_stream(socket, agent_id, input)
-      {:noreply, socket}
-    end
+    submit_message(socket, input)
   end
 
   defp start_stream(_socket, agent_id, input) do
@@ -871,6 +1050,50 @@ defmodule OrchidWeb.AgentLive do
     {:noreply, socket}
   end
 
+  def handle_info({:new_project_chat_reply, request_id, _input, result}, socket) do
+    cond do
+      socket.assigns.new_project_chat_request_id != request_id ->
+        {:noreply, socket}
+
+      true ->
+        case result do
+          {:ok, reply} ->
+            form =
+              ProjectIntake.merge_candidate_fields(
+                socket.assigns.new_project_form,
+                reply.candidate_fields
+              )
+
+            updated_messages =
+              socket.assigns.new_project_chat_messages ++
+                [%{role: :assistant, content: reply.assistant_message}]
+
+            {:noreply,
+             socket
+             |> assign_new_project_form_state(form)
+             |> assign(:new_project_chat_messages, updated_messages)
+             |> assign(:new_project_chat_running, false)
+             |> assign(:new_project_chat_request_id, nil)}
+
+          {:error, reason} ->
+            updated_messages =
+              socket.assigns.new_project_chat_messages ++
+                [
+                  %{
+                    role: :assistant,
+                    content: "I couldn't turn that into candidate fields. #{format_error(reason)}"
+                  }
+                ]
+
+            {:noreply,
+             socket
+             |> assign(:new_project_chat_messages, updated_messages)
+             |> assign(:new_project_chat_running, false)
+             |> assign(:new_project_chat_request_id, nil)}
+        end
+    end
+  end
+
   def handle_info({:refresh_after_stop, id}, socket) do
     socket =
       socket
@@ -902,7 +1125,8 @@ defmodule OrchidWeb.AgentLive do
   end
 
   def handle_info(
-        {:decomposition_test_done, result, raw_output, duration_ms, model, num_paths, max_iterations},
+        {:decomposition_test_done, result, raw_output, duration_ms, model, num_paths,
+         max_iterations},
         socket
       ) do
     socket =
@@ -951,13 +1175,17 @@ defmodule OrchidWeb.AgentLive do
         agent_id ->
           case Orchid.Agent.get_state(agent_id, 2000) do
             {:ok, state} ->
+              fingerprint = message_fingerprint(state.messages)
+
               socket
               |> assign(:agent_status, state.status)
               |> assign(:agent_wait_status, wait_status_from_memory(state.memory))
-              |> assign(:messages, format_messages(state.messages))
+              |> maybe_assign_messages(state.messages, fingerprint)
 
             _ ->
               socket
+              |> assign(:agent_status, :idle)
+              |> assign(:agent_wait_status, nil)
           end
       end
 
@@ -966,8 +1194,9 @@ defmodule OrchidWeb.AgentLive do
       |> assign(:agents, list_agents_with_info())
       |> refresh_sandbox_statuses()
       |> refresh_goals()
+      |> maybe_refresh_diagnostics()
 
-    Process.send_after(self(), :poll_agent_status, 2000)
+    schedule_poll(socket)
     {:noreply, socket}
   end
 
@@ -985,7 +1214,16 @@ defmodule OrchidWeb.AgentLive do
         <div class="sidebar-header">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
             <h2 style="margin: 0;">Projects</h2>
-            <button class="btn btn-secondary btn-sm" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" phx-click="show_new_project">+ New</button>
+            <div style="display: flex; gap: 0.35rem;">
+              <%= if @current_project do %>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  style="padding: 0.2rem 0.5rem; font-size: 0.75rem;"
+                  phx-click="clear_project"
+                >Clear</button>
+              <% end %>
+              <button class="btn btn-secondary btn-sm" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" phx-click="show_new_project">+ New</button>
+            </div>
           </div>
           <form phx-change="search_projects">
             <input
@@ -999,55 +1237,26 @@ defmodule OrchidWeb.AgentLive do
           </form>
         </div>
         <div class="sidebar-content">
-          <%= if @creating_project do %>
-            <form phx-submit="create_project" phx-change="update_new_project_name" style="padding: 0.5rem;">
-              <input
-                type="text"
-                name="name"
-                value={@new_project_name}
-                placeholder="Project name"
-                class="sidebar-search"
-                style="margin-bottom: 0.5rem;"
-                autofocus
-              />
-              <div style="display: flex; gap: 0.25rem;">
-                <button type="submit" class="btn btn-sm">Create</button>
-                <button type="button" class="btn btn-secondary btn-sm" phx-click="cancel_new_project">Cancel</button>
-              </div>
-            </form>
-          <% else %>
-            <%= if @current_project do %>
-              <div class="project-item active" style="margin-bottom: 0.5rem;">
-                <span class="project-icon"></span>
-                <span style="flex: 1;"><%= get_project_name(@projects, @current_project) %></span>
-                <button
-                  class="btn btn-secondary btn-sm"
-                  style="padding: 0.15rem 0.4rem; font-size: 0.7rem;"
-                  phx-click="clear_project"
-                >×</button>
-              </div>
-            <% end %>
-            <%= for project <- filter_projects(@projects, @project_query, @current_project) do %>
-              <% p_status = project.metadata[:status] %>
-              <div
-                class="project-item"
-                phx-click="select_project"
-                phx-value-id={project.id}
-                style={if p_status in [:paused, :archived], do: "opacity: 0.5;", else: ""}
-              >
-                <span class="project-icon"></span>
-                <span style="flex: 1;"><%= project.name %></span>
-                <%= if p_status == :paused do %>
-                  <span style="font-size: 0.65rem; color: #d29922; background: #2d2000; padding: 0.05rem 0.3rem; border-radius: 3px;">paused</span>
-                <% end %>
-                <%= if p_status == :archived do %>
-                  <span style="font-size: 0.65rem; color: #8b949e; background: #21262d; padding: 0.05rem 0.3rem; border-radius: 3px;">archived</span>
-                <% end %>
-              </div>
-            <% end %>
-            <%= if @projects == [] and not @creating_project do %>
-              <div class="no-projects">No projects yet</div>
-            <% end %>
+          <%= for project <- filter_projects(@projects, @project_query) do %>
+            <% p_status = project.metadata[:status] %>
+            <div
+              class={["project-item", if(project.id == @current_project, do: "active")]}
+              phx-click="select_project"
+              phx-value-id={project.id}
+              style={if p_status in [:paused, :archived], do: "opacity: 0.5;", else: ""}
+            >
+              <span class="project-icon"></span>
+              <span style="flex: 1;"><%= project.name %></span>
+              <%= if p_status == :paused do %>
+                <span style="font-size: 0.65rem; color: #d29922; background: #2d2000; padding: 0.05rem 0.3rem; border-radius: 3px;">paused</span>
+              <% end %>
+              <%= if p_status == :archived do %>
+                <span style="font-size: 0.65rem; color: #8b949e; background: #21262d; padding: 0.05rem 0.3rem; border-radius: 3px;">archived</span>
+              <% end %>
+            </div>
+          <% end %>
+          <%= if @projects == [] do %>
+            <div class="no-projects">No projects yet</div>
           <% end %>
         </div>
         <div class="sidebar-footer">
@@ -1087,6 +1296,11 @@ defmodule OrchidWeb.AgentLive do
               </form>
               <a href="/prompts" class="btn btn-secondary" style="padding: 0.4rem 0.6rem;">Prompts</a>
               <a href="/settings" class="btn btn-secondary" style="padding: 0.4rem 0.6rem;">Settings</a>
+              <button
+                class="btn btn-secondary"
+                phx-click="toggle_diagnostics"
+                style={"padding: 0.4rem 0.6rem; #{if @show_diagnostics, do: "border-color: #58a6ff; color: #58a6ff;", else: ""}"}
+              >Diagnostics</button>
               <button class="btn btn-secondary" phx-click="show_create_template" title="New Template" style="padding: 0.4rem 0.6rem;">+T</button>
               <%= if @selected_template do %>
                 <button class="btn" phx-click="create_agent">New Agent</button>
@@ -1137,34 +1351,22 @@ defmodule OrchidWeb.AgentLive do
                   <div style="flex: 1;">
                     <label style="display: block; color: #8b949e; margin-bottom: 0.25rem; font-size: 0.85rem;">Provider</label>
                     <select class="sidebar-search" style="width: 100%;" phx-change="update_template_provider" name="provider">
-                      <option value="cli" selected={@template_provider == :cli}>CLI</option>
-                      <option value="codex" selected={@template_provider == :codex}>Codex</option>
-                      <option value="oauth" selected={@template_provider == :oauth}>API</option>
-                      <option value="gemini" selected={@template_provider == :gemini}>Gemini</option>
-                      <option value="cerebras" selected={@template_provider == :cerebras}>Cerebras</option>
-                      <option value="openrouter" selected={@template_provider == :openrouter}>OpenRouter</option>
+                      <%= for provider <- @template_provider_options do %>
+                        <option value={Atom.to_string(provider.id)} selected={@template_provider == provider.id}>
+                          <%= provider.label %>
+                        </option>
+                      <% end %>
                     </select>
                   </div>
                   <div style="flex: 1;">
                     <label style="display: block; color: #8b949e; margin-bottom: 0.25rem; font-size: 0.85rem;">Model</label>
                     <select class="sidebar-search" style="width: 100%;" phx-change="update_template_model" name="model">
                       <option value="" selected={@template_model == nil}>Default</option>
-                      <option value="opus" selected={@template_model == :opus}>Opus</option>
-                      <option value="sonnet" selected={@template_model == :sonnet}>Sonnet</option>
-                      <option value="haiku" selected={@template_model == :haiku}>Haiku</option>
-                      <option value="gpt53" selected={@template_model == :gpt53}>GPT 5.3</option>
-                      <option value="gemini_pro" selected={@template_model == :gemini_pro}>Gemini Pro</option>
-                      <option value="gemini_flash" selected={@template_model == :gemini_flash}>Gemini Flash</option>
-                      <option value="gemini_flash_image" selected={@template_model == :gemini_flash_image}>Gemini Flash Image</option>
-                      <option value="gemini_3_flash" selected={@template_model == :gemini_3_flash}>Gemini 3 Flash</option>
-                      <option value="llama_3_1_8b" selected={@template_model == :llama_3_1_8b}>Llama 3.1 8B</option>
-                      <option value="llama_3_3_70b" selected={@template_model == :llama_3_3_70b}>Llama 3.3 70B</option>
-                      <option value="gpt_oss_120b" selected={@template_model == :gpt_oss_120b}>GPT OSS 120B</option>
-                      <option value="qwen_3_32b" selected={@template_model == :qwen_3_32b}>Qwen 3 32B</option>
-                      <option value="qwen_3_235b" selected={@template_model == :qwen_3_235b}>Qwen 3 235B</option>
-                      <option value="zai_glm_4_7" selected={@template_model == :zai_glm_4_7}>Z.ai GLM 4.7</option>
-                      <option value="minimax_m2_5" selected={@template_model == :minimax_m2_5}>MiniMax M2.5</option>
-                      <option value="glm_5" selected={@template_model == :glm_5}>GLM-5</option>
+                      <%= for model <- @template_model_options do %>
+                        <option value={Atom.to_string(model.id)} selected={@template_model == model.id}>
+                          <%= model.label %>
+                        </option>
+                      <% end %>
                     </select>
                   </div>
                 </div>
@@ -1189,6 +1391,45 @@ defmodule OrchidWeb.AgentLive do
                   <button type="button" class="btn btn-secondary" phx-click="cancel_create_template">Cancel</button>
                 </div>
               </form>
+            </div>
+          <% end %>
+
+          <%= if @show_diagnostics do %>
+            <div class="goals-section" style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.75rem;">
+                <div>
+                  <h3 style="color: #c9d1d9; margin: 0; font-size: 1rem;">Diagnostics</h3>
+                  <div style="color: #8b949e; font-size: 0.8rem; margin-top: 0.2rem;">
+                    Showing the last <%= @server_log_tail_lines %> lines of <code>priv/data/server.log</code>
+                  </div>
+                </div>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                  <span style="color: #8b949e; font-size: 0.75rem;">
+                    Updated <%= short_time(@server_log_updated_at) %>
+                  </span>
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    style="padding: 0.2rem 0.5rem; font-size: 0.75rem;"
+                    phx-click="refresh_diagnostics"
+                  >Refresh</button>
+                </div>
+              </div>
+
+              <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.75rem; word-break: break-all;">
+                <%= @server_log_path %>
+              </div>
+
+              <%= if @server_log_error do %>
+                <div style="background: #3d1114; color: #f85149; border: 1px solid #f85149; border-radius: 4px; padding: 0.5rem; font-size: 0.85rem;">
+                  <%= @server_log_error %>
+                </div>
+              <% else %>
+                <%= if @server_log_tail == "" do %>
+                  <div style="color: #8b949e; font-size: 0.85rem;">No log output yet.</div>
+                <% else %>
+                  <pre style="margin: 0; white-space: pre-wrap; word-break: break-word; max-height: 32rem; overflow-y: auto; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 0.75rem; color: #c9d1d9; font-size: 0.8rem;"><%= @server_log_tail %></pre>
+                <% end %>
+              <% end %>
             </div>
           <% end %>
 
@@ -1322,6 +1563,230 @@ defmodule OrchidWeb.AgentLive do
               </form>
             </div>
           <% else %>
+            <%= if @project_workspace_mode == :new_project do %>
+              <div class="project-detail" style="margin-bottom: 1.5rem;">
+                <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem;">
+                  <div>
+                    <h2 style="color: #c9d1d9; margin: 0 0 0.35rem 0;">New Project</h2>
+                    <p style="color: #8b949e; margin: 0; max-width: 48rem;">
+                      Capture enough context to make the workspace actionable from the start.
+                    </p>
+                  </div>
+                  <button class="btn btn-secondary" phx-click="cancel_new_project">Cancel</button>
+                </div>
+
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-start;">
+                  <div class="goals-section" style="flex: 1 1 24rem; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+                    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.85rem;">
+                      <div>
+                        <h3 style="color: #c9d1d9; margin: 0 0 0.35rem 0; font-size: 1rem;">Brief Workshop</h3>
+                        <p style="color: #8b949e; margin: 0; font-size: 0.85rem;">
+                          Work out the candidate fields through a short intake chat. The form stays editable throughout.
+                        </p>
+                      </div>
+                      <span style={"font-size: 0.75rem; padding: 0.2rem 0.55rem; border-radius: 999px; #{if @new_project_ready_to_submit, do: "background: #0e2a15; color: #7ee787;", else: "background: #2d2000; color: #d29922;"}"}>
+                        <%= if @new_project_ready_to_submit, do: "Ready", else: "Drafting" %>
+                      </span>
+                    </div>
+
+                    <div style="background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.85rem;">
+                      <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.3rem;">Required fields</div>
+                      <div style="color: #c9d1d9; font-size: 0.85rem;">
+                        <%= if @new_project_missing_fields == [] do %>
+                          Name, objective, and definition of done are all present.
+                        <% else %>
+                          Still needed: <%= Enum.map_join(@new_project_missing_fields, ", ", &ProjectIntake.field_label/1) %>
+                        <% end %>
+                      </div>
+                    </div>
+
+                    <div style="background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 0.75rem; max-height: 22rem; overflow-y: auto; margin-bottom: 0.85rem;">
+                      <%= for msg <- @new_project_chat_messages do %>
+                        <div style={"margin-bottom: 0.75rem; padding: 0.7rem 0.8rem; border-radius: 6px; border: 1px solid #30363d; #{new_project_chat_message_style(msg.role)}"}>
+                          <div style="font-size: 0.72rem; color: #8b949e; margin-bottom: 0.3rem;"><%= new_project_chat_role_label(msg.role) %></div>
+                          <div style="white-space: pre-wrap; color: #c9d1d9; font-size: 0.85rem;"><%= msg.content %></div>
+                        </div>
+                      <% end %>
+
+                      <%= if @new_project_chat_running do %>
+                        <div style="padding: 0.7rem 0.8rem; border-radius: 6px; border: 1px solid #30363d; background: #111b2e; color: #58a6ff; font-size: 0.85rem;">
+                          Asking the next question...
+                        </div>
+                      <% end %>
+                    </div>
+
+                    <form phx-submit="send_new_project_chat" phx-change="update_new_project_chat_input">
+                      <div style="display: flex; flex-direction: column; gap: 0.65rem;">
+                        <textarea
+                          name="input"
+                          class="sidebar-search"
+                          placeholder="Answer the current question or add more context."
+                          style="width: 100%; min-height: 5.5rem; resize: vertical;"
+                        ><%= @new_project_chat_input %></textarea>
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                          <div style="color: #8b949e; font-size: 0.75rem;">
+                            Current focus: <%= ProjectIntake.field_label(@new_project_chat_focus || "final review") %>
+                          </div>
+                          <button class="btn" type="submit" disabled={@new_project_chat_running}>
+                            <%= if @new_project_chat_running, do: "Thinking...", else: "Continue Intake" %>
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                  </div>
+
+                  <div class="goals-section" style="flex: 1 1 30rem; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+                    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.85rem;">
+                      <div>
+                        <h3 style="color: #c9d1d9; margin: 0 0 0.35rem 0; font-size: 1rem;">Candidate Fields</h3>
+                        <p style="color: #8b949e; margin: 0; font-size: 0.85rem;">
+                          Chat suggestions land here, but you can edit any field directly before submitting.
+                        </p>
+                      </div>
+                    </div>
+
+                    <%= if @new_project_errors[:general] do %>
+                      <div style="background: #3d1114; color: #f85149; border: 1px solid #f85149; border-radius: 4px; padding: 0.65rem 0.75rem; margin-bottom: 0.75rem; font-size: 0.85rem;">
+                        <%= @new_project_errors[:general] %>
+                      </div>
+                    <% end %>
+
+                    <form phx-submit="create_project" phx-change="update_new_project_form">
+                      <div style="display: flex; flex-direction: column; gap: 0.9rem;">
+                        <div>
+                          <label style="display: block; color: #c9d1d9; margin-bottom: 0.35rem; font-size: 0.85rem;">Project Name</label>
+                          <input
+                            type="text"
+                            name="project[name]"
+                            value={@new_project_form.name}
+                            placeholder="Migration hardening, packet decoder overhaul, docs cleanup..."
+                            class="sidebar-search"
+                            style="width: 100%;"
+                            autofocus
+                          />
+                          <%= if @new_project_errors[:name] do %>
+                            <div style="color: #f85149; font-size: 0.78rem; margin-top: 0.3rem;"><%= @new_project_errors[:name] %></div>
+                          <% end %>
+                        </div>
+
+                        <div>
+                          <label style="display: block; color: #c9d1d9; margin-bottom: 0.35rem; font-size: 0.85rem;">Objective</label>
+                          <textarea
+                            name="project[objective]"
+                            class="sidebar-search"
+                            placeholder="What should this project achieve?"
+                            style="width: 100%; min-height: 4.5rem; resize: vertical;"
+                          ><%= @new_project_form.objective %></textarea>
+                          <%= if @new_project_errors[:objective] do %>
+                            <div style="color: #f85149; font-size: 0.78rem; margin-top: 0.3rem;"><%= @new_project_errors[:objective] %></div>
+                          <% end %>
+                        </div>
+
+                        <div>
+                          <label style="display: block; color: #c9d1d9; margin-bottom: 0.35rem; font-size: 0.85rem;">Definition Of Done</label>
+                          <textarea
+                            name="project[success_criteria]"
+                            class="sidebar-search"
+                            placeholder="What must be true before this project is considered complete?"
+                            style="width: 100%; min-height: 4.5rem; resize: vertical;"
+                          ><%= @new_project_form.success_criteria %></textarea>
+                          <%= if @new_project_errors[:success_criteria] do %>
+                            <div style="color: #f85149; font-size: 0.78rem; margin-top: 0.3rem;"><%= @new_project_errors[:success_criteria] %></div>
+                          <% end %>
+                        </div>
+
+                        <div>
+                          <label style="display: block; color: #c9d1d9; margin-bottom: 0.35rem; font-size: 0.85rem;">Background</label>
+                          <textarea
+                            name="project[background]"
+                            class="sidebar-search"
+                            placeholder="Relevant context, prior work, decisions, or business constraints."
+                            style="width: 100%; min-height: 4rem; resize: vertical;"
+                          ><%= @new_project_form.background %></textarea>
+                        </div>
+
+                        <div>
+                          <label style="display: block; color: #c9d1d9; margin-bottom: 0.35rem; font-size: 0.85rem;">Constraints / Non-Goals</label>
+                          <textarea
+                            name="project[constraints]"
+                            class="sidebar-search"
+                            placeholder="What should not change? What constraints must be respected?"
+                            style="width: 100%; min-height: 4rem; resize: vertical;"
+                          ><%= @new_project_form.constraints %></textarea>
+                        </div>
+
+                        <div>
+                          <label style="display: block; color: #c9d1d9; margin-bottom: 0.35rem; font-size: 0.85rem;">Relevant Paths</label>
+                          <textarea
+                            name="project[relevant_paths_text]"
+                            class="sidebar-search"
+                            placeholder="One entry per line. Repos, files, directories, and URLs all work."
+                            style="width: 100%; min-height: 3.5rem; resize: vertical;"
+                          ><%= @new_project_form.relevant_paths_text %></textarea>
+                        </div>
+
+                        <div>
+                          <label style="display: block; color: #c9d1d9; margin-bottom: 0.35rem; font-size: 0.85rem;">Suggested First Goal</label>
+                          <input
+                            type="text"
+                            name="project[kickoff_goal]"
+                            value={@new_project_form.kickoff_goal}
+                            placeholder="Optional kickoff goal to create immediately"
+                            class="sidebar-search"
+                            style="width: 100%;"
+                          />
+                        </div>
+
+                        <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+                          <div style="flex: 1 1 18rem;">
+                            <label style="display: block; color: #c9d1d9; margin-bottom: 0.35rem; font-size: 0.85rem;">Default Template</label>
+                            <select
+                              name="project[default_template_id]"
+                              class="sidebar-search"
+                              style="width: 100%;"
+                            >
+                              <option value="" selected={is_nil(@new_project_form.default_template_id)}>No default</option>
+                              <%= for {category, templates} <- group_templates_by_category(@templates) do %>
+                                <optgroup label={category}>
+                                  <%= for template <- templates do %>
+                                    <option value={template.id} selected={@new_project_form.default_template_id == template.id}>
+                                      <%= template.name %>
+                                    </option>
+                                  <% end %>
+                                </optgroup>
+                              <% end %>
+                            </select>
+                            <%= if @new_project_errors[:default_template_id] do %>
+                              <div style="color: #f85149; font-size: 0.78rem; margin-top: 0.3rem;"><%= @new_project_errors[:default_template_id] %></div>
+                            <% end %>
+                          </div>
+
+                          <div style="flex: 1 1 12rem;">
+                            <label style="display: block; color: #c9d1d9; margin-bottom: 0.35rem; font-size: 0.85rem;">Default Execution Mode</label>
+                            <select
+                              name="project[default_execution_mode]"
+                              class="sidebar-search"
+                              style="width: 100%;"
+                            >
+                              <option value="vm" selected={@new_project_form.default_execution_mode == :vm}>VM</option>
+                              <option value="host" selected={@new_project_form.default_execution_mode == :host}>Host</option>
+                            </select>
+                            <%= if @new_project_errors[:default_execution_mode] do %>
+                              <div style="color: #f85149; font-size: 0.78rem; margin-top: 0.3rem;"><%= @new_project_errors[:default_execution_mode] %></div>
+                            <% end %>
+                          </div>
+                        </div>
+
+                        <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                          <button type="button" class="btn btn-secondary" phx-click="cancel_new_project">Cancel</button>
+                          <button type="submit" class="btn" disabled={!@new_project_ready_to_submit}>Create Project</button>
+                        </div>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            <% else %>
             <%= if @current_project do %>
               <div class="project-detail" style="margin-bottom: 1.5rem;">
                 <h2 style="color: #c9d1d9; margin-bottom: 0.5rem;">
@@ -1372,6 +1837,12 @@ defmodule OrchidWeb.AgentLive do
                 <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
                   <button
                     class={"btn btn-secondary btn-sm"}
+                    style={"padding: 0.2rem 0.6rem; font-size: 0.75rem; #{if @project_tab == :overview, do: "border-color: #58a6ff; color: #58a6ff;", else: ""}"}
+                    phx-click="set_project_tab"
+                    phx-value-tab="overview"
+                  >Overview</button>
+                  <button
+                    class={"btn btn-secondary btn-sm"}
                     style={"padding: 0.2rem 0.6rem; font-size: 0.75rem; #{if @project_tab == :goals, do: "border-color: #58a6ff; color: #58a6ff;", else: ""}"}
                     phx-click="set_project_tab"
                     phx-value-tab="goals"
@@ -1384,6 +1855,71 @@ defmodule OrchidWeb.AgentLive do
                   >Decomposition Lab</button>
                 </div>
 
+                <% project = get_project(@projects, @current_project) %>
+                <%= if @project_tab == :overview do %>
+                <div class="goals-section" style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+                  <h3 style="color: #c9d1d9; margin: 0 0 1rem 0; font-size: 1rem;">Project Brief</h3>
+                  <div style="display: flex; flex-direction: column; gap: 0.9rem;">
+                    <div>
+                      <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.25rem;">Objective</div>
+                      <div style="color: #c9d1d9; white-space: pre-wrap;"><%= project_text(project && project.metadata[:objective]) %></div>
+                    </div>
+                    <div>
+                      <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.25rem;">Definition Of Done</div>
+                      <div style="color: #c9d1d9; white-space: pre-wrap;"><%= project_text(project && project.metadata[:success_criteria]) %></div>
+                    </div>
+                    <div>
+                      <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.25rem;">Background</div>
+                      <div style="color: #c9d1d9; white-space: pre-wrap;"><%= project_text(project && project.metadata[:background]) %></div>
+                    </div>
+                    <div>
+                      <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.25rem;">Constraints</div>
+                      <div style="color: #c9d1d9; white-space: pre-wrap;"><%= project_text(project && project.metadata[:constraints]) %></div>
+                    </div>
+                    <div>
+                      <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.25rem;">Relevant Paths</div>
+                      <%= if project_paths(project) == [] do %>
+                        <div style="color: #8b949e;">Not set.</div>
+                      <% else %>
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.35rem;">
+                          <%= for path <- project_paths(project) do %>
+                            <span style="background: #0d1117; border: 1px solid #30363d; border-radius: 999px; padding: 0.15rem 0.5rem; color: #c9d1d9; font-family: monospace; font-size: 0.78rem;"><%= path %></span>
+                          <% end %>
+                        </div>
+                      <% end %>
+                    </div>
+                    <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+                      <div style="flex: 1 1 15rem;">
+                        <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.25rem;">Suggested First Goal</div>
+                        <div style="color: #c9d1d9; white-space: pre-wrap;"><%= project_text(project && project.metadata[:kickoff_goal]) %></div>
+                      </div>
+                      <div style="flex: 1 1 15rem;">
+                        <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.25rem;">Default Template</div>
+                        <div style="color: #c9d1d9;"><%= project_default_template(project) %></div>
+                      </div>
+                      <div style="flex: 1 1 12rem;">
+                        <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.25rem;">Default Execution Mode</div>
+                        <div style="color: #c9d1d9;"><%= project_execution_mode(project) %></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="goals-section" style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.75rem;">
+                    <h3 style="color: #c9d1d9; margin: 0; font-size: 1rem;">Saved Brief</h3>
+                    <div style="display: flex; gap: 0.5rem;">
+                      <button class="btn btn-secondary btn-sm" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" phx-click="show_new_goal">+ Add Goal</button>
+                      <button class="btn btn-secondary btn-sm" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" phx-click="set_project_tab" phx-value-tab="decomposition">Open Lab</button>
+                    </div>
+                  </div>
+                  <%= if project && String.trim(project.content || "") != "" do %>
+                    <pre style="margin: 0; white-space: pre-wrap; word-break: break-word; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 0.75rem; color: #c9d1d9; font-size: 0.85rem;"><%= project.content %></pre>
+                  <% else %>
+                    <div style="color: #8b949e;">No saved project brief yet.</div>
+                  <% end %>
+                </div>
+                <% else %>
                 <%= if @project_tab == :goals do %>
                 <div class="goals-section" style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
                   <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
@@ -1527,12 +2063,12 @@ defmodule OrchidWeb.AgentLive do
                               <button
                                 phx-click="toggle_goal_status"
                                 phx-value-id={goal.id}
-                                style={"width: 1.25rem; height: 1.25rem; border-radius: 3px; border: 1px solid #30363d; background: #{if goal.metadata[:status] == :completed, do: "#238636", else: "transparent"}; cursor: pointer; display: flex; align-items: center; justify-content: center; color: white; font-size: 0.7rem;"}
+                                style={"width: 1.25rem; height: 1.25rem; border-radius: 3px; border: 1px solid #30363d; background: #{if Orchid.Goals.terminal_status?(goal.metadata[:status]), do: "#238636", else: "transparent"}; cursor: pointer; display: flex; align-items: center; justify-content: center; color: white; font-size: 0.7rem;"}
                               >
-                                <%= if goal.metadata[:status] == :completed, do: "✓", else: "" %>
+                                <%= if Orchid.Goals.terminal_status?(goal.metadata[:status]), do: "✓", else: "" %>
                               </button>
                               <span
-                                style={"flex: 1; cursor: pointer; color: #{if goal.metadata[:status] == :completed, do: "#8b949e", else: "#c9d1d9"}; #{if goal.metadata[:status] == :completed, do: "text-decoration: line-through;", else: ""}"}
+                                style={"flex: 1; cursor: pointer; color: #{if Orchid.Goals.terminal_status?(goal.metadata[:status]), do: "#8b949e", else: "#c9d1d9"}; #{if Orchid.Goals.terminal_status?(goal.metadata[:status]), do: "text-decoration: line-through;", else: ""}"}
                                 phx-click="toggle_goal_details"
                                 phx-value-id={goal.id}
                               >
@@ -1680,14 +2216,11 @@ defmodule OrchidWeb.AgentLive do
                           phx-change="update_decomp_model"
                           name="model"
                         >
-                          <option value="opus" selected={@decomp_model == :opus}>Opus</option>
-                          <option value="sonnet" selected={@decomp_model == :sonnet}>Sonnet</option>
-                          <option value="haiku" selected={@decomp_model == :haiku}>Haiku</option>
-                          <option value="gpt53" selected={@decomp_model == :gpt53}>GPT 5.3</option>
-                          <option value="gemini_3_pro" selected={@decomp_model == :gemini_3_pro}>Gemini 3 Pro</option>
-                          <option value="minimax_m2_5" selected={@decomp_model == :minimax_m2_5}>MiniMax M2.5</option>
-                          <option value="glm_5" selected={@decomp_model == :glm_5}>GLM-5</option>
-                          <option value="kimi_k2_5" selected={@decomp_model == :kimi_k2_5}>Kimi K2.5</option>
+                          <%= for model <- @decomp_model_options do %>
+                            <option value={Atom.to_string(model.id)} selected={@decomp_model == model.id}>
+                              <%= model.label %>
+                            </option>
+                          <% end %>
                         </select>
                         <input
                           type="number"
@@ -1756,6 +2289,7 @@ defmodule OrchidWeb.AgentLive do
                   <% end %>
                 </div>
                 <% end %>
+                <% end %>
 
                 <h3 style="color: #c9d1d9; margin-bottom: 0.5rem;">Agents</h3>
               </div>
@@ -1809,6 +2343,7 @@ defmodule OrchidWeb.AgentLive do
                 <p style="color: #8b949e;">No active agents. Create one to get started.</p>
               <% end %>
             </div>
+            <% end %>
           <% end %>
         </div>
       </div>
@@ -1816,25 +2351,74 @@ defmodule OrchidWeb.AgentLive do
     """
   end
 
-  defp filter_projects(projects, query, current_project) do
+  defp filter_projects(projects, query) do
     projects
-    |> Enum.reject(fn p -> p.id == current_project end)
     |> Enum.filter(fn p ->
       query == "" or String.contains?(String.downcase(p.name), String.downcase(query))
     end)
   end
 
+  defp get_project(projects, id) do
+    Enum.find(projects, fn p -> p.id == id end)
+  end
+
   defp get_project_name(projects, id) do
-    case Enum.find(projects, fn p -> p.id == id end) do
+    case get_project(projects, id) do
       nil -> "Unknown"
       project -> project.name
     end
   end
 
   defp get_project_status(projects, id) do
-    case Enum.find(projects, fn p -> p.id == id end) do
+    case get_project(projects, id) do
       nil -> nil
       project -> project.metadata[:status]
+    end
+  end
+
+  defp project_text(nil), do: "Not set."
+
+  defp project_text(value) when is_binary(value) do
+    if String.trim(value) == "", do: "Not set.", else: value
+  end
+
+  defp project_text(value), do: to_string(value)
+
+  defp project_paths(nil), do: []
+
+  defp project_paths(project) do
+    case project.metadata[:relevant_paths] do
+      paths when is_list(paths) -> Enum.reject(paths, &(&1 in [nil, ""]))
+      path when is_binary(path) and path != "" -> [path]
+      _ -> []
+    end
+  end
+
+  defp project_default_template(nil), do: "Not set."
+
+  defp project_default_template(project) do
+    case project.metadata[:default_template_id] do
+      nil ->
+        "Not set."
+
+      "" ->
+        "Not set."
+
+      template_id ->
+        case Orchid.Object.get(template_id) do
+          {:ok, template} -> template.name
+          _ -> template_id
+        end
+    end
+  end
+
+  defp project_execution_mode(nil), do: "VM"
+
+  defp project_execution_mode(project) do
+    case project.metadata[:default_execution_mode] do
+      :host -> "Host"
+      "host" -> "Host"
+      _ -> "VM"
     end
   end
 
@@ -1862,6 +2446,7 @@ defmodule OrchidWeb.AgentLive do
     cond do
       outcome in [:failure, :blocked] -> outcome
       status == :completed -> :success
+      status == :superseded -> :superseded
       outcome == :success -> :success
       true -> nil
     end
@@ -1879,11 +2464,13 @@ defmodule OrchidWeb.AgentLive do
   end
 
   defp goal_outcome_label(:success), do: "Completed"
+  defp goal_outcome_label(:superseded), do: "Superseded"
   defp goal_outcome_label(:failure), do: "Failed"
   defp goal_outcome_label(:blocked), do: "Blocked"
   defp goal_outcome_label(_), do: "Done"
 
   defp goal_outcome_style(:success), do: "background: #0e2a15; color: #7ee787;"
+  defp goal_outcome_style(:superseded), do: "background: #2d2000; color: #d29922;"
   defp goal_outcome_style(:failure), do: "background: #3d1114; color: #f85149;"
   defp goal_outcome_style(:blocked), do: "background: #2d2000; color: #d29922;"
   defp goal_outcome_style(_), do: "background: #21262d; color: #8b949e;"
@@ -1894,6 +2481,7 @@ defmodule OrchidWeb.AgentLive do
     case String.downcase(v) do
       "completed" -> :completed
       "pending" -> :pending
+      "superseded" -> :superseded
       _ -> nil
     end
   end
@@ -1935,6 +2523,229 @@ defmodule OrchidWeb.AgentLive do
   defp format_tool_result(content) when is_binary(content), do: truncate(content, 500)
   defp format_tool_result(content), do: truncate(inspect(content), 500)
 
+  defp new_project_chat_role_label(:assistant), do: "Guide"
+  defp new_project_chat_role_label(:user), do: "You"
+  defp new_project_chat_role_label(role), do: role |> to_string() |> String.capitalize()
+
+  defp new_project_chat_message_style(:assistant),
+    do: "background: #111b2e; border-color: #24405c;"
+
+  defp new_project_chat_message_style(:user),
+    do: "background: #0d1117; border-color: #30363d;"
+
+  defp new_project_chat_message_style(_role),
+    do: "background: #0d1117; border-color: #30363d;"
+
+  defp default_new_project_form(default_template_id, default_execution_mode) do
+    %{
+      name: "",
+      objective: "",
+      success_criteria: "",
+      background: "",
+      constraints: "",
+      relevant_paths_text: "",
+      kickoff_goal: "",
+      default_template_id: default_template_id,
+      default_execution_mode: default_execution_mode || :vm
+    }
+  end
+
+  defp assign_new_project_form_state(socket, form) do
+    form = normalize_new_project_form(form, socket.assigns[:new_project_form] || %{})
+
+    socket
+    |> assign(:new_project_form, form)
+    |> assign(:new_project_ready_to_submit, ProjectIntake.ready_to_submit?(form))
+    |> assign(:new_project_missing_fields, ProjectIntake.missing_fields(form))
+    |> assign(:new_project_chat_focus, ProjectIntake.next_focus(form))
+  end
+
+  defp normalize_new_project_form(form, fallback) when is_map(form) and is_map(fallback) do
+    default_template_id =
+      case Map.get(form, :default_template_id) do
+        nil -> Map.get(fallback, :default_template_id)
+        value -> value
+      end
+
+    default_execution_mode =
+      case Map.get(form, :default_execution_mode) do
+        nil -> Map.get(fallback, :default_execution_mode, :vm)
+        value -> value
+      end
+
+    Map.merge(
+      default_new_project_form(default_template_id, default_execution_mode),
+      form,
+      fn
+        key, left, nil when key in [:default_template_id, :default_execution_mode] -> left
+        _key, _left, right -> right
+      end
+    )
+  end
+
+  defp reset_new_project_draft(socket, default_template_id, default_execution_mode) do
+    form = default_new_project_form(default_template_id, default_execution_mode)
+
+    socket
+    |> assign_new_project_form_state(form)
+    |> assign(:new_project_errors, %{})
+    |> assign(:new_project_chat_messages, ProjectIntake.initial_messages(form))
+    |> assign(:new_project_chat_input, "")
+    |> assign(:new_project_chat_running, false)
+    |> assign(:new_project_chat_request_id, nil)
+  end
+
+  defp open_new_project_workspace(socket) do
+    socket
+    |> assign(:project_workspace_mode, :new_project)
+    |> reset_new_project_draft(
+      socket.assigns.selected_template,
+      socket.assigns.agent_execution_mode
+    )
+    |> assign(:new_project_return_project, socket.assigns.current_project)
+    |> assign(:new_project_return_tab, socket.assigns.project_tab || :overview)
+  end
+
+  defp merge_new_project_form(form, attrs) when is_map(attrs) do
+    %{
+      name: Map.get(attrs, "name", form.name),
+      objective: Map.get(attrs, "objective", form.objective),
+      success_criteria: Map.get(attrs, "success_criteria", form.success_criteria),
+      background: Map.get(attrs, "background", form.background),
+      constraints: Map.get(attrs, "constraints", form.constraints),
+      relevant_paths_text: Map.get(attrs, "relevant_paths_text", form.relevant_paths_text),
+      kickoff_goal: Map.get(attrs, "kickoff_goal", form.kickoff_goal),
+      default_template_id:
+        normalize_select_value(Map.get(attrs, "default_template_id", form.default_template_id)),
+      default_execution_mode:
+        normalize_form_execution_mode(
+          Map.get(attrs, "default_execution_mode", form.default_execution_mode)
+        )
+    }
+  end
+
+  defp project_create_attrs(form, intake_conversation) do
+    %{
+      name: form.name,
+      objective: form.objective,
+      success_criteria: form.success_criteria,
+      background: form.background,
+      constraints: form.constraints,
+      relevant_paths: form.relevant_paths_text,
+      kickoff_goal: form.kickoff_goal,
+      intake_conversation: intake_conversation,
+      default_template_id: form.default_template_id,
+      default_execution_mode: form.default_execution_mode
+    }
+  end
+
+  defp select_project_workspace(socket, project_id, opts \\ []) do
+    tab = Keyword.get(opts, :tab, :overview)
+
+    socket
+    |> assign(:project_workspace_mode, :project)
+    |> assign(:current_project, project_id)
+    |> assign(:project_tab, tab)
+    |> assign(:goals, Orchid.Goals.list_for_project(project_id))
+    |> assign(:mcp_calls, recent_mcp_calls(project_id, 40))
+    |> assign(:decomp_result, nil)
+    |> assign(:decomp_error, nil)
+    |> assign(:new_project_errors, %{})
+    |> assign(:new_project_chat_running, false)
+    |> assign(:new_project_chat_request_id, nil)
+    |> maybe_apply_project_defaults(project_id)
+    |> refresh_sandbox_statuses()
+  end
+
+  defp maybe_apply_project_defaults(socket, nil), do: socket
+
+  defp maybe_apply_project_defaults(socket, project_id) do
+    case Orchid.Object.get(project_id) do
+      {:ok, project} ->
+        socket
+        |> maybe_assign_template(project.metadata[:default_template_id])
+        |> maybe_assign_execution_mode(project.metadata[:default_execution_mode])
+
+      _ ->
+        socket
+    end
+  end
+
+  defp maybe_assign_template(socket, nil), do: socket
+  defp maybe_assign_template(socket, ""), do: socket
+
+  defp maybe_assign_template(socket, template_id) do
+    case Orchid.Object.get(template_id) do
+      {:ok, %{type: :agent_template}} -> assign(socket, :selected_template, template_id)
+      _ -> socket
+    end
+  end
+
+  defp maybe_assign_execution_mode(socket, mode) when mode in [:vm, :host] do
+    assign(socket, :agent_execution_mode, mode)
+  end
+
+  defp maybe_assign_execution_mode(socket, mode) when mode in ["vm", "host"] do
+    assign(socket, :agent_execution_mode, parse_agent_execution_mode(mode))
+  end
+
+  defp maybe_assign_execution_mode(socket, _mode), do: socket
+
+  defp normalize_select_value(nil), do: nil
+  defp normalize_select_value(""), do: nil
+  defp normalize_select_value(value), do: value
+
+  defp normalize_form_execution_mode(:vm), do: :vm
+  defp normalize_form_execution_mode(:host), do: :host
+  defp normalize_form_execution_mode("host"), do: :host
+  defp normalize_form_execution_mode("root_vm"), do: :host
+  defp normalize_form_execution_mode(_value), do: :vm
+
+  defp truthy_param?(value) when value in [true, "true", "1", 1], do: true
+  defp truthy_param?(_value), do: false
+
+  defp submit_message(socket, input) do
+    if input == "" or socket.assigns.streaming do
+      {:noreply, socket}
+    else
+      agent_id = socket.assigns.current_agent
+      messages = socket.assigns.messages ++ [%{role: :user, content: input, tool_calls: nil}]
+
+      socket =
+        socket
+        |> assign(:messages, messages)
+        |> assign(:message_fingerprint, nil)
+        |> assign(:pending_message, input)
+        |> assign(:input, "")
+        |> assign(:streaming, true)
+        |> assign(:stream_content, "")
+        |> assign(:retry_count, 0)
+
+      start_stream(socket, agent_id, input)
+      {:noreply, socket}
+    end
+  end
+
+  defp maybe_assign_messages(socket, messages, fingerprint) do
+    if socket.assigns[:message_fingerprint] == fingerprint do
+      socket
+    else
+      socket
+      |> assign(:messages, format_messages(messages))
+      |> assign(:message_fingerprint, fingerprint)
+    end
+  end
+
+  defp message_fingerprint(messages) when is_list(messages) do
+    last =
+      case List.last(messages) do
+        nil -> nil
+        msg -> {msg.role, msg.content, length(msg[:tool_calls] || [])}
+      end
+
+    {length(messages), last}
+  end
+
   defp truncate(str, max) when byte_size(str) > max do
     String.slice(str, 0, max) <> "..."
   end
@@ -1942,51 +2753,33 @@ defmodule OrchidWeb.AgentLive do
   defp truncate(str, _max), do: str
 
   defp list_agents_with_info do
-    Orchid.Agent.list()
-    |> Enum.map(fn agent_id ->
-      case Orchid.Agent.get_state(agent_id) do
-        {:ok, state} ->
-          template_name =
-            case state.config[:template_id] do
-              nil ->
-                nil
+    agent_ids = Orchid.Agent.list()
 
-              tid ->
-                case Orchid.Object.get(tid) do
-                  {:ok, obj} -> obj.name
-                  _ -> nil
-                end
-            end
+    states_by_id =
+      Enum.reduce(agent_ids, %{}, fn agent_id, acc ->
+        case Orchid.Agent.get_state(agent_id) do
+          {:ok, state} -> Map.put(acc, agent_id, state)
+          _ -> acc
+        end
+      end)
 
-          goal_name =
-            case state.project_id do
-              nil ->
-                nil
+    template_names =
+      Orchid.Object.list_agent_templates()
+      |> Map.new(fn template -> {template.id, template.name} end)
 
-              pid ->
-                Orchid.Object.list_goals_for_project(pid)
-                |> Enum.find(fn g -> g.metadata[:agent_id] == agent_id end)
-                |> case do
-                  nil -> nil
-                  g -> g.name
-                end
-            end
+    goals_by_project =
+      states_by_id
+      |> Map.values()
+      |> Enum.map(& &1.project_id)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+      |> Map.new(fn project_id ->
+        {project_id, Orchid.Object.list_goals_for_project(project_id)}
+      end)
 
-          status = state.status
-          wait_status = wait_status_from_memory(state.memory)
-          execution_mode = state.execution_mode || :vm
-
-          %{
-            id: agent_id,
-            project_id: state.project_id,
-            template: template_name,
-            goal: goal_name,
-            status: status,
-            wait_status: wait_status,
-            execution_mode: execution_mode
-          }
-
-        _ ->
+    Enum.map(agent_ids, fn agent_id ->
+      case Map.get(states_by_id, agent_id) do
+        nil ->
           %{
             id: agent_id,
             project_id: nil,
@@ -1996,8 +2789,56 @@ defmodule OrchidWeb.AgentLive do
             wait_status: nil,
             execution_mode: :vm
           }
+
+        state ->
+          template_name =
+            case state.config[:template_id] do
+              nil -> nil
+              tid -> Map.get(template_names, tid)
+            end
+
+          goal_name =
+            case state.project_id do
+              nil ->
+                nil
+
+              pid ->
+                Map.get(goals_by_project, pid, [])
+                |> Enum.find(fn g -> g.metadata[:agent_id] == agent_id end)
+                |> case do
+                  nil -> nil
+                  g -> g.name
+                end
+            end
+
+          %{
+            id: agent_id,
+            project_id: state.project_id,
+            template: template_name,
+            goal: goal_name,
+            status: state.status,
+            wait_status: wait_status_from_memory(state.memory),
+            execution_mode: state.execution_mode || :vm
+          }
       end
     end)
+  end
+
+  defp schedule_poll(socket) do
+    Process.send_after(self(), :poll_agent_status, poll_interval_ms(socket))
+  end
+
+  defp poll_interval_ms(socket) do
+    cond do
+      socket.assigns[:streaming] ->
+        @active_poll_interval_ms
+
+      socket.assigns[:current_agent] && socket.assigns[:agent_status] != :idle ->
+        @active_poll_interval_ms
+
+      true ->
+        @idle_poll_interval_ms
+    end
   end
 
   defp wait_status_from_memory(memory) when is_map(memory) do
@@ -2061,6 +2902,118 @@ defmodule OrchidWeb.AgentLive do
     end
   end
 
+  defp clear_diagnostics(socket) do
+    socket
+    |> assign(:server_log_path, server_log_path())
+    |> assign(:server_log_tail, "")
+    |> assign(:server_log_error, nil)
+    |> assign(:server_log_updated_at, nil)
+    |> assign(:server_log_tail_lines, @server_log_tail_lines)
+  end
+
+  defp maybe_refresh_diagnostics(socket) do
+    if socket.assigns[:show_diagnostics] do
+      refresh_diagnostics(socket)
+    else
+      socket
+    end
+  end
+
+  defp refresh_diagnostics(socket) do
+    path = server_log_path()
+
+    socket =
+      socket
+      |> assign(:server_log_path, path)
+      |> assign(:server_log_tail_lines, @server_log_tail_lines)
+      |> assign(:server_log_updated_at, DateTime.utc_now())
+
+    case read_log_tail(path, @server_log_tail_lines) do
+      {:ok, content} ->
+        socket
+        |> assign(:server_log_tail, content)
+        |> assign(:server_log_error, nil)
+
+      {:error, :enoent} ->
+        socket
+        |> assign(:server_log_tail, "")
+        |> assign(:server_log_error, "Log file has not been created yet.")
+
+      {:error, reason} ->
+        socket
+        |> assign(:server_log_tail, "")
+        |> assign(:server_log_error, "Failed to read log: #{inspect(reason)}")
+    end
+  end
+
+  defp server_log_path do
+    Orchid.Project.data_dir()
+    |> Path.join("server.log")
+    |> Path.expand()
+  end
+
+  defp read_log_tail(path, max_lines) when max_lines > 0 do
+    case :file.open(path, [:read, :binary]) do
+      {:ok, fd} ->
+        try do
+          with {:ok, size} <- :file.position(fd, :eof),
+               {:ok, content} <- read_log_tail_chunks(fd, size, max_lines, "") do
+            {:ok, extract_tail_lines(content, max_lines)}
+          end
+        after
+          :file.close(fd)
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp read_log_tail_chunks(_fd, 0, _max_lines, acc), do: {:ok, acc}
+
+  defp read_log_tail_chunks(fd, pos, max_lines, acc) do
+    read_size = min(pos, @server_log_tail_chunk_bytes)
+    start_pos = pos - read_size
+
+    with {:ok, _} <- :file.position(fd, {:bof, start_pos}),
+         {:ok, chunk} <- :file.read(fd, read_size) do
+      updated = chunk <> acc
+
+      if start_pos == 0 or newline_count(updated) > max_lines do
+        {:ok, updated}
+      else
+        read_log_tail_chunks(fd, start_pos, max_lines, updated)
+      end
+    end
+  end
+
+  defp extract_tail_lines(content, max_lines) do
+    trailing_newline? = String.ends_with?(content, "\n")
+
+    lines =
+      content
+      |> String.split("\n", trim: false)
+      |> then(fn parts ->
+        if trailing_newline? do
+          Enum.drop(parts, -1)
+        else
+          parts
+        end
+      end)
+      |> Enum.take(-max_lines)
+
+    case {Enum.join(lines, "\n"), trailing_newline? and lines != []} do
+      {joined, true} -> joined <> "\n"
+      {joined, false} -> joined
+    end
+  end
+
+  defp newline_count(content) do
+    content
+    |> :binary.matches("\n")
+    |> length()
+  end
+
   defp filter_agents(agents, nil), do: agents
 
   defp filter_agents(agents, current_project) do
@@ -2072,7 +3025,7 @@ defmodule OrchidWeb.AgentLive do
   defp filter_visible_goals(goals, false), do: goals
 
   defp filter_visible_goals(goals, true) do
-    Enum.filter(goals, fn goal -> goal.metadata[:status] != :completed end)
+    Enum.filter(goals, fn goal -> Orchid.Goals.open_status?(goal.metadata[:status]) end)
   end
 
   defp recent_mcp_calls(project_id, limit) do
@@ -2211,12 +3164,15 @@ defmodule OrchidWeb.AgentLive do
   end
 
   defp goal_node_fill(:completed), do: "#0e2a15"
+  defp goal_node_fill(:superseded), do: "#2d2000"
   defp goal_node_fill(_), do: "#0d1117"
 
   defp goal_node_stroke(:completed), do: "#238636"
+  defp goal_node_stroke(:superseded), do: "#d29922"
   defp goal_node_stroke(_), do: "#30363d"
 
   defp goal_node_text(:completed), do: "#8b949e"
+  defp goal_node_text(:superseded), do: "#d29922"
   defp goal_node_text(_), do: "#c9d1d9"
 
   defp truncate_name(name, max) do
@@ -2292,18 +3248,23 @@ defmodule OrchidWeb.AgentLive do
     end)
   end
 
-  defp parse_decomp_model("opus"), do: :opus
-  defp parse_decomp_model("sonnet"), do: :sonnet
-  defp parse_decomp_model("haiku"), do: :haiku
-  defp parse_decomp_model("gpt53"), do: :gpt53
-  defp parse_decomp_model("gemini_3_pro"), do: :gemini_3_pro
-  defp parse_decomp_model("minimax_m2_5"), do: :minimax_m2_5
-  defp parse_decomp_model("glm_5"), do: :glm_5
-  defp parse_decomp_model("kimi_k2_5"), do: :kimi_k2_5
-  defp parse_decomp_model(_), do: :sonnet
+  defp parse_model(value, fallback) do
+    case Catalog.normalize_model(value) do
+      nil -> fallback
+      model -> model
+    end
+  end
 
-  defp decomp_llm_config(:gpt53), do: %{provider: :codex, model: :gpt53}
-  defp decomp_llm_config(model), do: %{provider: :cli, model: model}
+  defp parse_provider(value, fallback) do
+    case Catalog.normalize_provider(value) do
+      nil -> fallback
+      provider -> provider
+    end
+  end
+
+  defp decomp_llm_config(model) do
+    %{provider: Catalog.provider_for_model(model) || :cli, model: model}
+  end
 
   defp parse_agent_execution_mode("host"), do: :host
   defp parse_agent_execution_mode("root_vm"), do: :host
@@ -2316,7 +3277,8 @@ defmodule OrchidWeb.AgentLive do
     end
   end
 
-  defp clamp_int(v, _default, min, max) when is_integer(v), do: v |> Kernel.max(min) |> Kernel.min(max)
-  defp clamp_int(_v, default, _min, _max), do: default
+  defp clamp_int(v, _default, min, max) when is_integer(v),
+    do: v |> Kernel.max(min) |> Kernel.min(max)
 
+  defp clamp_int(_v, default, _min, _max), do: default
 end

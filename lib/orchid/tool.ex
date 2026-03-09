@@ -57,7 +57,18 @@ defmodule Orchid.Tool do
   """
   def execute(name, args, context) do
     if allowed?(name, context) do
-      do_execute(name, args, context)
+      try do
+        do_execute(name, args, context)
+      rescue
+        e ->
+          {:error, "Tool #{name} crashed: #{Exception.message(e)}"}
+      catch
+        :exit, reason ->
+          {:error, "Tool #{name} exited: #{inspect(reason)}"}
+
+        kind, reason ->
+          {:error, "Tool #{name} #{kind}: #{inspect(reason)}"}
+      end
     else
       {:error, {:tool_not_allowed, name}}
     end
@@ -82,7 +93,9 @@ defmodule Orchid.Tool do
     end
   end
 
-  defp select_tools(nil), do: Enum.reject(@tools, fn mod -> mod.name() in @template_scoped_tools end)
+  defp select_tools(nil),
+    do: Enum.reject(@tools, fn mod -> mod.name() in @template_scoped_tools end)
+
   defp select_tools([]), do: []
 
   defp select_tools(allowed_names) when is_list(allowed_names) do
@@ -113,7 +126,9 @@ defmodule Orchid.Tool do
 
   defp sandbox_active?(_), do: false
 
-  defp host_project_mode?(%{agent_state: %{project_id: project_id}}) when is_binary(project_id), do: true
+  defp host_project_mode?(%{agent_state: %{project_id: project_id}}) when is_binary(project_id),
+    do: true
+
   defp host_project_mode?(_), do: false
 
   defp execute_in_sandbox(name, args, ctx) do
@@ -133,7 +148,9 @@ defmodule Orchid.Tool do
         Orchid.Sandbox.list_files(pid, args["path"] || "/workspace")
 
       "grep" ->
-        Orchid.Sandbox.grep_files(pid, args["pattern"], args["path"] || "/workspace", glob: args["glob"])
+        Orchid.Sandbox.grep_files(pid, args["pattern"], args["path"] || "/workspace",
+          glob: args["glob"]
+        )
     end
   end
 

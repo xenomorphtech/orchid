@@ -13,6 +13,7 @@ defmodule Orchid.LLM.CLI do
   - `:permission_mode` - Permission mode for tool execution
   """
   require Logger
+  alias Orchid.LLM.Catalog
 
   @doc """
   Send a chat request via Claude CLI.
@@ -113,7 +114,10 @@ defmodule Orchid.LLM.CLI do
       config[:project_id] ->
         escaped_args = Enum.map(args, &shell_escape/1)
         workspace = Orchid.Project.files_path(config[:project_id]) |> Path.expand()
-        host_cmd = "cd #{shell_escape(workspace)} && #{claude_path} #{Enum.join(escaped_args, " ")}"
+
+        host_cmd =
+          "cd #{shell_escape(workspace)} && #{claude_path} #{Enum.join(escaped_args, " ")}"
+
         "sh -c #{shell_escape(host_cmd)}"
 
       # No project — run on host
@@ -256,14 +260,12 @@ defmodule Orchid.LLM.CLI do
     args ++ ["--", prompt]
   end
 
-  defp model_flag(nil), do: []
-  defp model_flag(:sonnet), do: ["--model", "sonnet"]
-  defp model_flag(:haiku), do: ["--model", "haiku"]
-  defp model_flag(:opus), do: ["--model", "opus"]
-  defp model_flag("opus-4.6"), do: ["--model", "opus"]
-  defp model_flag("claude-opus-4.6"), do: ["--model", "opus"]
-  defp model_flag(model) when is_binary(model), do: ["--model", model]
-  defp model_flag(_), do: []
+  defp model_flag(model) do
+    case Catalog.resolve_model(model, :cli) do
+      nil -> []
+      resolved -> ["--model", resolved]
+    end
+  end
 
   defp oauth_token_expired_error?(content) when is_binary(content) do
     lc = String.downcase(content)
@@ -301,6 +303,8 @@ defmodule Orchid.LLM.CLI do
 
   defp run_in_container?(config) do
     mode = config[:execution_mode]
-    config[:project_id] && !config[:use_orchid_tools] && mode not in [:host, "host", :root_vm, "root_vm"]
+
+    config[:project_id] && !config[:use_orchid_tools] &&
+      mode not in [:host, "host", :root_vm, "root_vm"]
   end
 end

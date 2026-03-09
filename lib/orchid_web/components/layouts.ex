@@ -11,16 +11,28 @@ defmodule OrchidWeb.Layouts do
         <meta name="csrf-token" content={Plug.CSRFProtection.get_csrf_token()} />
         <title>Orchid - LLM Agent Framework</title>
         <style>
+          :root {
+            --app-height: 100vh;
+          }
+          @supports (height: 100dvh) {
+            :root {
+              --app-height: 100dvh;
+            }
+          }
           * { box-sizing: border-box; margin: 0; padding: 0; }
+          html {
+            height: 100%;
+          }
           body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background: #0d1117;
             color: #c9d1d9;
-            min-height: 100vh;
+            min-height: var(--app-height);
           }
           .app-layout {
             display: flex;
-            min-height: 100vh;
+            min-height: var(--app-height);
+            height: var(--app-height);
           }
           .sidebar {
             width: 260px;
@@ -97,8 +109,15 @@ defmodule OrchidWeb.Layouts do
             display: flex;
             flex-direction: column;
             min-width: 0;
+            min-height: 0;
           }
-          .container { max-width: 1200px; margin: 0 auto; padding: 1rem; width: 100%; }
+          .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 1rem;
+            width: 100%;
+            min-height: 0;
+          }
           h1 { color: #58a6ff; margin-bottom: 1rem; }
           .btn {
             background: #238636;
@@ -120,13 +139,15 @@ defmodule OrchidWeb.Layouts do
           .chat-container {
             display: flex;
             flex-direction: column;
-            height: calc(100vh - 120px);
+            height: calc(var(--app-height) - 120px);
+            min-height: 0;
             background: #161b22;
             border-radius: 8px;
             border: 1px solid #30363d;
           }
           .messages {
             flex: 1;
+            min-height: 0;
             overflow-y: auto;
             padding: 1rem;
           }
@@ -279,7 +300,7 @@ defmodule OrchidWeb.Layouts do
               min-height: 60vh;
             }
             .chat-container {
-              height: calc(100vh - 40vh - 60px);
+              height: calc(var(--app-height) - 40vh - 60px);
             }
             .agent-list {
               grid-template-columns: 1fr;
@@ -296,6 +317,20 @@ defmodule OrchidWeb.Layouts do
         <script src="https://cdn.jsdelivr.net/npm/phoenix_live_view@1.1.19/priv/static/phoenix_live_view.min.js"></script>
         <script>
           document.addEventListener("DOMContentLoaded", function() {
+            const setAppHeight = () => {
+              const viewport = window.visualViewport
+              const height = viewport ? viewport.height : window.innerHeight
+              document.documentElement.style.setProperty("--app-height", `${height}px`)
+            }
+
+            setAppHeight()
+            window.addEventListener("resize", setAppHeight)
+            window.addEventListener("orientationchange", setAppHeight)
+            if (window.visualViewport) {
+              window.visualViewport.addEventListener("resize", setAppHeight)
+              window.visualViewport.addEventListener("scroll", setAppHeight)
+            }
+
             let Hooks = {
               ScrollBottom: {
                 mounted() {
@@ -310,7 +345,11 @@ defmodule OrchidWeb.Layouts do
                   this.el.addEventListener("keydown", (e) => {
                     if (e.key === "Enter" && e.ctrlKey) {
                       e.preventDefault()
-                      this.pushEvent("send_message", {})
+                      if (this.el.form && this.el.form.requestSubmit) {
+                        this.el.form.requestSubmit()
+                      } else if (this.el.form) {
+                        this.el.form.dispatchEvent(new Event("submit", {bubbles: true, cancelable: true}))
+                      }
                     }
                   })
                 }

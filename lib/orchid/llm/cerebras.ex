@@ -4,19 +4,9 @@ defmodule Orchid.LLM.Cerebras do
   Handles chat completion with streaming support.
   """
   require Logger
+  alias Orchid.LLM.Catalog
 
   @base_url "https://api.cerebras.ai/v1/chat/completions"
-
-  @models %{
-    llama_3_1_8b: "llama3.1-8b",
-    llama_3_3_70b: "llama-3.3-70b",
-    gpt_oss_120b: "gpt-oss-120b",
-    qwen_3_32b: "qwen-3-32b",
-    qwen_3_235b: "qwen-3-235b-a22b-instruct-2507",
-    zai_glm_4_7: "zai-glm-4.7"
-  }
-
-  @default_model :llama_3_3_70b
 
   @doc """
   Send a chat request to Cerebras.
@@ -25,9 +15,11 @@ defmodule Orchid.LLM.Cerebras do
     api_key = config[:api_key] || Orchid.Object.get_fact_value("cerebras_api_key")
 
     if is_nil(api_key) do
-      {:error, {:api_key_missing, "cerebras_api_key fact not set. Add it in Settings > Facts or local facts file."}}
+      {:error,
+       {:api_key_missing,
+        "cerebras_api_key fact not set. Add it in Settings > Facts or local facts file."}}
     else
-      model = resolve_model(config[:model])
+      model = Catalog.resolve_model(config[:model], :cerebras)
       body = build_request_body(config, context, model)
 
       IO.puts("[Cerebras] chat request to model=#{model}")
@@ -62,9 +54,11 @@ defmodule Orchid.LLM.Cerebras do
     api_key = config[:api_key] || Orchid.Object.get_fact_value("cerebras_api_key")
 
     if is_nil(api_key) do
-      {:error, {:api_key_missing, "cerebras_api_key fact not set. Add it in Settings > Facts or local facts file."}}
+      {:error,
+       {:api_key_missing,
+        "cerebras_api_key fact not set. Add it in Settings > Facts or local facts file."}}
     else
-      model = resolve_model(config[:model])
+      model = Catalog.resolve_model(config[:model], :cerebras)
       body = build_request_body(config, context, model) |> Map.put(:stream, true)
 
       IO.puts("[Cerebras] chat_stream request to model=#{model}")
@@ -105,10 +99,6 @@ defmodule Orchid.LLM.Cerebras do
   end
 
   # Private functions
-
-  defp resolve_model(model) do
-    Map.get(@models, model, Map.get(@models, @default_model))
-  end
 
   defp headers(api_key) do
     [

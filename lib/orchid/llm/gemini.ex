@@ -4,23 +4,16 @@ defmodule Orchid.LLM.Gemini do
   Handles chat completion with streaming and tool use support.
   """
   require Logger
+  alias Orchid.LLM.Catalog
 
   @base_url "https://generativelanguage.googleapis.com/v1beta/models"
-
-  @models %{
-    gemini_pro: "gemini-2.5-pro",
-    gemini_flash: "gemini-2.5-flash",
-    gemini_flash_image: "gemini-2.5-flash-image",
-    gemini_3_flash: "gemini-3-flash-preview",
-    gemini_3_pro: "gemini-3-pro-preview"
-  }
 
   @doc """
   Send a chat request to Gemini.
   """
   def chat(config, context) do
     with {:ok, api_key} <- get_api_key(config) do
-      model = resolve_model(config[:model])
+      model = Catalog.resolve_model(config[:model], :gemini)
       url = "#{@base_url}/#{model}:generateContent"
       body = build_request_body(config, context)
 
@@ -44,12 +37,15 @@ defmodule Orchid.LLM.Gemini do
   """
   def chat_stream(config, context, callback) do
     with {:ok, api_key} <- get_api_key(config) do
-      model = resolve_model(config[:model])
+      model = Catalog.resolve_model(config[:model], :gemini)
       url = "#{@base_url}/#{model}:streamGenerateContent?alt=sse"
       body = build_request_body(config, context)
 
       tool_count = length(get_in(body, [:tools, Access.at(0), :function_declarations]) || [])
-      Logger.info("Gemini: sending to #{model}, #{tool_count} tools, #{length(body.contents)} messages")
+
+      Logger.info(
+        "Gemini: sending to #{model}, #{tool_count} tools, #{length(body.contents)} messages"
+      )
 
       acc = %{content: "", tool_calls: [], current_tool: nil}
 
@@ -63,13 +59,22 @@ defmodule Orchid.LLM.Gemini do
         {:cont, {req, resp}}
       end
 
-      case Req.post(url, json: body, headers: headers(api_key), receive_timeout: 120_000, into: stream_fun) do
+      case Req.post(url,
+             json: body,
+             headers: headers(api_key),
+             receive_timeout: 120_000,
+             into: stream_fun
+           ) do
         {:ok, %{status: 200}} ->
           final = Process.get(:gemini_acc, acc)
           Process.delete(:gemini_acc)
           Process.delete(:gemini_raw)
           tool_calls = if final.tool_calls == [], do: nil, else: final.tool_calls
-          Logger.info("Gemini: response complete, content=#{String.length(final.content)} chars, tool_calls=#{if tool_calls, do: length(tool_calls), else: 0}")
+
+          Logger.info(
+            "Gemini: response complete, content=#{String.length(final.content)} chars, tool_calls=#{if tool_calls, do: length(tool_calls), else: 0}"
+          )
+
           {:ok, %{content: final.content, tool_calls: tool_calls}}
 
         {:ok, %{status: status}} ->
@@ -113,10 +118,13 @@ defmodule Orchid.LLM.Gemini do
     # Summarize the request: message count, tool count, content sizes
     msg_count = length(body[:contents] || [])
     tool_count = length(get_in(body, [:tools, Access.at(0), :function_declarations]) || [])
-    system_size = case body[:system_instruction] do
-      %{parts: [%{text: t}]} -> byte_size(t)
-      _ -> 0
-    end
+
+    system_size =
+      case body[:system_instruction] do
+        %{parts: [%{text: t}]} -> byte_size(t)
+        _ -> 0
+      end
+
     body_json = Jason.encode!(body, pretty: true)
     body_size = byte_size(body_json)
 
@@ -134,13 +142,14 @@ defmodule Orchid.LLM.Gemini do
 
   defp get_api_key(config) do
     case config[:api_key] || Orchid.Object.get_fact_value("gemini_api_key") do
-      nil -> {:error, {:api_key_missing, "gemini_api_key fact not set. Add it in Settings > Facts or local facts file."}}
-      key -> {:ok, key}
-    end
-  end
+      nil ->
+        {:error,
+         {:api_key_missing,
+          "gemini_api_key fact not set. Add it in Settings > Facts or local facts file."}}
 
-  defp resolve_model(model) do
-    Map.get(@models, model, Map.get(@models, :gemini_pro))
+      key ->
+        {:ok, key}
+    end
   end
 
   defp headers(api_key) do
@@ -247,9 +256,14 @@ defmodule Orchid.LLM.Gemini do
       if props == %{}, do: %{_placeholder: %{type: "string", description: "unused"}}, else: props
     end)
     |> Map.update("properties", nil, fn
-      nil -> nil
-      props when props == %{} -> %{"_placeholder" => %{"type" => "string", "description" => "unused"}}
-      props -> props
+      nil ->
+        nil
+
+      props when props == %{} ->
+        %{"_placeholder" => %{"type" => "string", "description" => "unused"}}
+
+      props ->
+        props
     end)
     |> Map.reject(fn {_k, v} -> is_nil(v) end)
   end
@@ -302,7 +316,9 @@ defmodule Orchid.LLM.Gemini do
                 Enum.map(msg.tool_calls, fn tc ->
                   part = %{functionCall: %{name: tc.name, args: tc.arguments || %{}}}
                   # Include thoughtSignature for Gemini 3+ models
-                  if tc[:thought_signature], do: Map.put(part, :thoughtSignature, tc.thought_signature), else: part
+                  if tc[:thought_signature],
+                    do: Map.put(part, :thoughtSignature, tc.thought_signature),
+                    else: part
                 end)
 
               text_parts ++ tool_parts
@@ -338,9 +354,12 @@ defmodule Orchid.LLM.Gemini do
       nil,
       fn msg, acc ->
         case acc do
-          nil -> {:cont, msg}
+          nil ->
+            {:cont, msg}
+
           %{role: role} when role == msg.role ->
             {:cont, %{acc | parts: acc.parts ++ msg.parts}}
+
           _ ->
             {:cont, acc, msg}
         end
@@ -369,13 +388,17 @@ defmodule Orchid.LLM.Gemini do
       |> Enum.filter(&Map.has_key?(&1, "functionCall"))
       |> Enum.map(fn part ->
         fc = part["functionCall"]
+
         tc = %{
           id: "call_#{:crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)}",
           name: fc["name"],
           arguments: fc["args"] || %{}
         }
+
         # Preserve thoughtSignature for Gemini 3+ models
-        if part["thoughtSignature"], do: Map.put(tc, :thought_signature, part["thoughtSignature"]), else: tc
+        if part["thoughtSignature"],
+          do: Map.put(tc, :thought_signature, part["thoughtSignature"]),
+          else: tc
       end)
 
     tool_calls = if tool_calls == [], do: nil, else: tool_calls
@@ -405,12 +428,17 @@ defmodule Orchid.LLM.Gemini do
                     fc = part["functionCall"]
 
                     tc = %{
-                      id: "call_#{:crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)}",
+                      id:
+                        "call_#{:crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)}",
                       name: fc["name"],
                       arguments: fc["args"] || %{}
                     }
+
                     # Preserve thoughtSignature for Gemini 3+ models
-                    tc = if part["thoughtSignature"], do: Map.put(tc, :thought_signature, part["thoughtSignature"]), else: tc
+                    tc =
+                      if part["thoughtSignature"],
+                        do: Map.put(tc, :thought_signature, part["thoughtSignature"]),
+                        else: tc
 
                     %{acc | tool_calls: acc.tool_calls ++ [tc]}
 

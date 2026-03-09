@@ -50,6 +50,8 @@ defmodule Orchid.Goals do
 
   @doc "Delete all goals for a project."
   def clear_project(project_id) do
+    stop_project_agents(project_id)
+
     for goal <- list_for_project(project_id) do
       Object.delete(goal.id)
     end
@@ -80,6 +82,12 @@ defmodule Orchid.Goals do
     if status == :completed, do: notify_orchestrator(goal_id)
     result
   end
+
+  @doc "True when a goal status is terminal (no further work should be scheduled)."
+  def terminal_status?(status), do: status in [:completed, :superseded]
+
+  @doc "True when a goal status is open (eligible for scheduling/work)."
+  def open_status?(status), do: not terminal_status?(status)
 
   @doc "Add a dependency to a goal."
   def add_dependency(goal_id, depends_on_id) do
@@ -120,8 +128,12 @@ defmodule Orchid.Goals do
          {:ok, parent} <- Object.get(parent_id),
          orchestrator_id when not is_nil(orchestrator_id) <- parent.metadata[:agent_id] do
       report = goal.metadata[:report]
-      report_section = if report, do: "\n\nAgent report:\n#{String.slice(report, 0, 2000)}", else: ""
-      message = "Goal completed: \"#{goal.name}\" [#{goal_id}].#{report_section}\n\nCheck `goal_list` for updated state and continue with the next steps."
+
+      report_section =
+        if report, do: "\n\nAgent report:\n#{String.slice(report, 0, 2000)}", else: ""
+
+      message =
+        "Goal completed: \"#{goal.name}\" [#{goal_id}].#{report_section}\n\nCheck `goal_list` for updated state and continue with the next steps."
 
       Orchid.Agent.notify(orchestrator_id, message)
     else
@@ -154,4 +166,18 @@ defmodule Orchid.Goals do
         error
     end
   end
+
+  defp stop_project_agents(project_id) when is_binary(project_id) do
+    Orchid.Agent.list()
+    |> Enum.reduce([], fn agent_id, acc ->
+      case Orchid.Agent.get_state(agent_id, 2000) do
+        {:ok, %{project_id: ^project_id} = state} -> [state | acc]
+        _ -> acc
+      end
+    end)
+    |> Enum.sort_by(fn state -> if state.config[:use_orchid_tools], do: 0, else: 1 end)
+    |> Enum.each(fn state -> Orchid.Agent.stop(state.id) end)
+  end
+
+  defp stop_project_agents(_project_id), do: :ok
 end
