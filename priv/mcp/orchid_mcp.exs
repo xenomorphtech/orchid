@@ -262,7 +262,7 @@ defmodule OrchidMCP do
         }
       },
       %{
-        "name" => "task_report",
+        "name" => "task_report_result",
         "description" => "Report task outcome with summary/error and optional completion",
         "inputSchema" => %{
           "type" => "object",
@@ -583,12 +583,12 @@ defmodule OrchidMCP do
     end
   end
 
-  defp execute_tool("task_report", args, state) do
+  defp execute_tool("task_report_result", args, state) do
     outcome = to_string(args["outcome"] || "")
     summary = to_string(args["summary"] || "")
 
     if outcome == "" or summary == "" do
-      {:error, "task_report requires outcome and summary"}
+      {:error, "task_report_result requires outcome and summary"}
     else
       goal =
         cond do
@@ -606,7 +606,7 @@ defmodule OrchidMCP do
         end
 
       if is_nil(goal) do
-        {:error, "No target goal found for task_report"}
+        {:error, "No target goal found for task_report_result"}
       else
         if outcome in ["failure", "blocked"] and
              (is_nil(args["error"]) or String.trim(to_string(args["error"])) == "") do
@@ -651,6 +651,10 @@ defmodule OrchidMCP do
         end
       end
     end
+  end
+
+  defp execute_tool("task_report", args, state) do
+    execute_tool("task_report_result", args, state)
   end
 
   defp pending_child_goals(parent_goal_id, project_id) do

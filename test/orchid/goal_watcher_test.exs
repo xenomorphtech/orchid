@@ -53,6 +53,40 @@ defmodule Orchid.GoalWatcherTest do
     assert state.messages == []
   end
 
+  test "does not spawn a planner while a project is clearing goals", %{project: project} do
+    {:ok, dead_agent_id} =
+      Orchid.Agent.create(%{
+        project_id: project.id,
+        execution_mode: :host,
+        provider: :codex,
+        use_orchid_tools: true
+      })
+
+    {:ok, goal} =
+      Orchid.Object.create(
+        :goal,
+        "stale task",
+        "Should be deleted by the clear operation.",
+        metadata: %{
+          project_id: project.id,
+          status: :pending,
+          depends_on: [],
+          parent_goal_id: nil,
+          agent_id: dead_agent_id
+        }
+      )
+
+    :ok = Orchid.Agent.stop(dead_agent_id)
+    {:ok, _project} = Orchid.Object.update_metadata(project.id, %{clearing_goals: true})
+
+    send(Orchid.GoalWatcher, :check)
+    Process.sleep(200)
+
+    {:ok, refreshed_goal} = Orchid.Object.get(goal.id)
+    assert refreshed_goal.metadata[:agent_id] == dead_agent_id
+    assert project_agent_ids(project.id) == []
+  end
+
   test "planner kickoff message includes the saved project brief" do
     message =
       Orchid.GoalWatcher.planner_kickoff_message(
@@ -74,5 +108,15 @@ defmodule Orchid.GoalWatcherTest do
     {brief_pos, _} = :binary.match(message, "Saved project brief:")
     {goals_pos, _} = :binary.match(message, "Current objectives:")
     assert brief_pos < goals_pos
+  end
+
+  defp project_agent_ids(project_id) do
+    Orchid.Agent.list()
+    |> Enum.filter(fn agent_id ->
+      case Orchid.Agent.get_state(agent_id) do
+        {:ok, state} -> state.project_id == project_id
+        _ -> false
+      end
+    end)
   end
 end

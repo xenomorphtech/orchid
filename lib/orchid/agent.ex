@@ -354,7 +354,7 @@ defmodule Orchid.Agent do
   def handle_cast({:retry, notify}, state) do
     # Re-run the LLM without adding a new message (last message already in history)
     state = %{state | status: :thinking}
-    state = %{state | memory: Map.put(state.memory, :task_report_used_in_turn, false)}
+    state = %{state | memory: Map.put(state.memory, :task_report_result_used_in_turn, false)}
     publish_state(state)
     start_worker(state, notify)
     {:noreply, state}
@@ -368,7 +368,7 @@ defmodule Orchid.Agent do
 
   def handle_cast({:run, message, notify}, state) do
     state = %{state | status: :thinking}
-    state = %{state | memory: Map.put(state.memory, :task_report_used_in_turn, false)}
+    state = %{state | memory: Map.put(state.memory, :task_report_result_used_in_turn, false)}
     state = add_message(state, :user, message)
     publish_state(state)
     start_worker(state, notify)
@@ -448,7 +448,7 @@ defmodule Orchid.Agent do
     assigned_pending = assigned_pending_goals(new_state)
     tool_delta = tool_history_delta(state, new_state)
     # Auto-complete assigned goals for worker CLI/Codex agents (not orchestrators, not on error).
-    # If the worker already used task_report in this turn, skip reviewer auto-finalization.
+    # If the worker already used task_report_result in this turn, skip reviewer auto-finalization.
     impl_retry_triggered =
       if new_state.config[:provider] in [:cli, :codex] &&
            new_state.project_id &&
@@ -461,13 +461,13 @@ defmodule Orchid.Agent do
           end
 
         impl_retry_triggered =
-          if task_report_used_in_turn?(state, new_state) do
+          if task_report_result_used_in_turn?(state, new_state) do
             false
           else
             maybe_retry_for_missing_impl_evidence(new_state, assigned_pending, tool_delta)
           end
 
-        unless task_report_used_in_turn?(state, new_state) or impl_retry_triggered do
+        unless task_report_result_used_in_turn?(state, new_state) or impl_retry_triggered do
           Orchid.GoalReviewQueue.enqueue(
             new_state.id,
             new_state.project_id,
@@ -676,12 +676,12 @@ defmodule Orchid.Agent do
     end
   end
 
-  defp task_report_used_in_turn?(old_state, new_state) do
+  defp task_report_result_used_in_turn?(old_state, new_state) do
     old_len = length(old_state.tool_history)
 
     new_state.tool_history
     |> Enum.drop(old_len)
-    |> Enum.any?(fn tr -> tr.tool == "task_report" end)
+    |> Enum.any?(fn tr -> tr.tool in ["task_report_result", "task_report"] end)
   end
 
   defp assigned_pending_goals(state) do

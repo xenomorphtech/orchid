@@ -27,7 +27,7 @@ defmodule Orchid.Tool do
     Orchid.Tools.GoalCreate,
     Orchid.Tools.GoalUpdate,
     Orchid.Tools.PlanAletheia,
-    Orchid.Tools.TaskReport,
+    Orchid.Tools.TaskReportResult,
     Orchid.Tools.SandboxReset,
     Orchid.Tools.AgentSpawn,
     Orchid.Tools.Wait
@@ -35,6 +35,7 @@ defmodule Orchid.Tool do
 
   @sandboxed_tools ~w(shell read edit list grep)
   @template_scoped_tools ~w(project_list project_create)
+  @tool_aliases %{"task_report" => "task_report_result"}
 
   @doc """
   List all available tools with their schemas.
@@ -99,7 +100,12 @@ defmodule Orchid.Tool do
   defp select_tools([]), do: []
 
   defp select_tools(allowed_names) when is_list(allowed_names) do
-    allowed = MapSet.new(Enum.map(allowed_names, &to_string/1))
+    allowed =
+      allowed_names
+      |> Enum.map(&to_string/1)
+      |> Enum.map(&canonical_name/1)
+      |> MapSet.new()
+
     Enum.filter(@tools, fn mod -> MapSet.member?(allowed, mod.name()) end)
   end
 
@@ -107,16 +113,33 @@ defmodule Orchid.Tool do
 
   defp allowed?(name, %{agent_state: %{config: config}}) when is_map(config) do
     case config[:allowed_tools] do
-      nil -> to_string(name) not in @template_scoped_tools
-      names when is_list(names) -> to_string(name) in Enum.map(names, &to_string/1)
-      _ -> true
+      nil ->
+        canonical_name(name) not in @template_scoped_tools
+
+      names when is_list(names) ->
+        canonical = canonical_name(name)
+
+        names
+        |> Enum.map(&to_string/1)
+        |> Enum.map(&canonical_name/1)
+        |> Enum.member?(canonical)
+
+      _ ->
+        true
     end
   end
 
-  defp allowed?(name, _context), do: to_string(name) not in @template_scoped_tools
+  defp allowed?(name, _context), do: canonical_name(name) not in @template_scoped_tools
 
   defp find_tool(name) do
-    Enum.find(@tools, fn mod -> mod.name() == name end)
+    canonical = canonical_name(name)
+    Enum.find(@tools, fn mod -> mod.name() == canonical end)
+  end
+
+  defp canonical_name(name) do
+    name
+    |> to_string()
+    |> then(&Map.get(@tool_aliases, &1, &1))
   end
 
   defp sandbox_active?(%{agent_state: %{project_id: project_id, sandbox: s}})

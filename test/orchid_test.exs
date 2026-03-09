@@ -53,6 +53,7 @@ defmodule OrchidTest do
       assert Enum.any?(tools, &(&1.name == "shell"))
       assert Enum.any?(tools, &(&1.name == "sandbox_reset"))
       assert Enum.any?(tools, &(&1.name == "eval"))
+      assert Enum.any?(tools, &(&1.name == "task_report_result"))
       refute Enum.any?(tools, &(&1.name == "project_list"))
       refute Enum.any?(tools, &(&1.name == "project_create"))
 
@@ -260,6 +261,8 @@ defmodule OrchidTest do
       :ok = Orchid.Goals.clear_project(project.id)
 
       assert Orchid.Goals.list_for_project(project.id) == []
+      {:ok, project_after_clear} = Orchid.Object.get(project.id)
+      refute project_after_clear.metadata[:clearing_goals]
       refute planner_id in Orchid.Agent.list()
       refute worker_id in Orchid.Agent.list()
     end

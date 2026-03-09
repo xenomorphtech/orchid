@@ -50,13 +50,19 @@ defmodule Orchid.Goals do
 
   @doc "Delete all goals for a project."
   def clear_project(project_id) do
-    stop_project_agents(project_id)
+    mark_project_clearing(project_id, true)
 
-    for goal <- list_for_project(project_id) do
-      Object.delete(goal.id)
+    try do
+      stop_project_agents(project_id)
+
+      for goal <- list_for_project(project_id) do
+        Object.delete(goal.id)
+      end
+
+      :ok
+    after
+      mark_project_clearing(project_id, false)
     end
-
-    :ok
   end
 
   @doc "Toggle a goal between :pending and :completed."
@@ -180,4 +186,13 @@ defmodule Orchid.Goals do
   end
 
   defp stop_project_agents(_project_id), do: :ok
+
+  defp mark_project_clearing(project_id, clearing) when is_binary(project_id) do
+    case Object.update_metadata(project_id, %{clearing_goals: clearing}) do
+      {:ok, _project} -> :ok
+      _ -> :ok
+    end
+  end
+
+  defp mark_project_clearing(_project_id, _clearing), do: :ok
 end

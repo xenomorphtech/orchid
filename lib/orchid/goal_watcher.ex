@@ -80,7 +80,7 @@ defmodule Orchid.GoalWatcher do
       end)
 
     Enum.reduce(projects, state, fn project, acc_state ->
-      if project.metadata[:status] in [nil, :active] do
+      if project.metadata[:status] in [nil, :active] and project.metadata[:clearing_goals] != true do
         goals = Orchid.Object.list_goals_for_project(project.id)
         pending = Enum.filter(goals, fn g -> Orchid.Goals.open_status?(g.metadata[:status]) end)
 
@@ -374,7 +374,7 @@ defmodule Orchid.GoalWatcher do
 
     completion_instruction =
       if agent_state.config[:use_orchid_tools] do
-        "If work is complete, call `task_report` with `outcome: \"success\"` and include a concise report."
+        "If work is complete, call `task_report_result` with `outcome: \"success\"` and include a concise report."
       else
         "If work is complete, return a concise completion report directly. Do not mention unavailable tools."
       end

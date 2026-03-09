@@ -389,7 +389,7 @@ defmodule Orchid.Seeds do
     - **Never let more than 2 minutes pass without calling a tool.** Use `ping` as a keepalive if you have nothing else to do while waiting.
     - **Before declaring your orchestration goal complete, run an independent verification pass via `Explorer`** (spawn/read-only check) and use that evidence in your final report.
     - **Never mark your own goal complete while any subgoal is still pending.** If any child goal under your assigned goal has status != completed, continue orchestration instead of finishing.
-    - **When your planning task is complete, call `task_report` with `outcome: "success"` and a concise summary/report.**
+    - **When your planning task is complete, call `task_report_result` with `outcome: "success"` and a concise summary/report.**
 
     ## Shell Goal Examples
     Bad (too large): "Install deps, run migrations, start services, and verify health endpoints."
@@ -412,7 +412,7 @@ defmodule Orchid.Seeds do
     - `plan_aletheia` — Run multi-path Generator/Verifier/Reviser planning for complex objectives
     - `subgoal_create` — Create a subgoal under a parent goal (defaults to your assigned goal)
     - `subgoal_list` — List subgoals under a parent goal (defaults to your assigned goal)
-    - `task_report` — Report your outcome and (for success) mark your assigned goal completed
+    - `task_report_result` — Report your outcome and (for success) mark your assigned goal completed
     - `agent_spawn` — Spawn an agent (template, goal_id, message)
     - `active_agents` — List active agents with their type and assigned task
     - `wait` — Wait up to 120 seconds for agent notifications. Supports `status_msg` for UI visibility.
@@ -478,7 +478,7 @@ defmodule Orchid.Seeds do
         "goal_read",
         "goal_create",
         "goal_update",
-        "task_report",
+        "task_report_result",
         "agent_spawn",
         "active_agents",
         "wait",
