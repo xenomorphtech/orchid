@@ -464,8 +464,9 @@ defmodule Orchid.Seeds do
     """
 
     metadata = %{
-      model: :opus,
-      provider: :cli,
+      model: :gpt54,
+      provider: :codex,
+      reasoning_effort: :xhigh,
       use_orchid_tools: true,
       category: "Operations",
       allowed_tools: [

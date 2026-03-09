@@ -1,6 +1,9 @@
 defmodule OrchidWeb.AgentLive do
   use Phoenix.LiveView
 
+  @diagnostics_tail_lines 120
+  @diagnostics_max_chars 12_000
+
   @impl true
   def mount(params, _session, socket) do
     agent_id = params["id"]
@@ -42,6 +45,20 @@ defmodule OrchidWeb.AgentLive do
       |> assign(:decomp_running, false)
       |> assign(:decomp_result, nil)
       |> assign(:decomp_error, nil)
+      |> assign(:project_notes, [])
+      |> assign(:project_facts, [])
+      |> assign(:creating_project_note, false)
+      |> assign(:project_note_name, "")
+      |> assign(:project_note_content, "")
+      |> assign(:creating_project_fact, false)
+      |> assign(:project_fact_name, "")
+      |> assign(:project_fact_value, "")
+      |> assign(:diagnostics_log_path, diagnostics_log_path())
+      |> assign(:diagnostics_log_excerpt, nil)
+      |> assign(:diagnostics_summary, nil)
+      |> assign(:diagnostics_running, false)
+      |> assign(:diagnostics_error, nil)
+      |> assign(:diagnostics_updated_at, nil)
       |> assign(:templates, Orchid.Object.list_agent_templates())
       |> then(fn s ->
         templates = s.assigns.templates
@@ -196,6 +213,11 @@ defmodule OrchidWeb.AgentLive do
           config =
             if template.metadata[:model],
               do: Map.put(config, :model, template.metadata[:model]),
+              else: config
+
+          config =
+            if template.metadata[:reasoning_effort],
+              do: Map.put(config, :reasoning_effort, template.metadata[:reasoning_effort]),
               else: config
 
           config =
@@ -402,6 +424,7 @@ defmodule OrchidWeb.AgentLive do
      |> assign(:mcp_calls, recent_mcp_calls(id, 40))
      |> assign(:decomp_result, nil)
      |> assign(:decomp_error, nil)
+     |> refresh_project_knowledge()
      |> refresh_sandbox_statuses()}
   end
 
@@ -409,8 +432,16 @@ defmodule OrchidWeb.AgentLive do
     {:noreply,
      socket
      |> assign(:current_project, nil)
-     |> assign(:goals, [])
-     |> assign(:mcp_calls, recent_mcp_calls(nil, 40))}
+      |> assign(:goals, [])
+     |> assign(:mcp_calls, recent_mcp_calls(nil, 40))
+     |> assign(:project_notes, [])
+     |> assign(:project_facts, [])
+     |> assign(:creating_project_note, false)
+     |> assign(:project_note_name, "")
+     |> assign(:project_note_content, "")
+     |> assign(:creating_project_fact, false)
+     |> assign(:project_fact_name, "")
+     |> assign(:project_fact_value, "")}
   end
 
   def handle_event("show_new_project", _params, socket) do
@@ -432,12 +463,18 @@ defmodule OrchidWeb.AgentLive do
       {:ok, project} = Orchid.Projects.create(name)
 
       {:noreply,
-       assign(socket,
+       socket
+       |> assign(
          projects: Orchid.Object.list_projects(),
          creating_project: false,
          new_project_name: "",
-         current_project: project.id
-       )}
+         current_project: project.id,
+         project_tab: :goals,
+         goals: [],
+         mcp_calls: recent_mcp_calls(project.id, 40)
+       )
+       |> refresh_project_knowledge()
+       |> refresh_sandbox_statuses()}
     else
       {:noreply, socket}
     end
@@ -614,10 +651,18 @@ defmodule OrchidWeb.AgentLive do
     project_tab =
       case tab do
         "decomposition" -> :decomposition
+        "knowledge" -> :knowledge
+        "diagnostics" -> :diagnostics
         _ -> :goals
       end
 
-    {:noreply, assign(socket, :project_tab, project_tab)}
+    socket =
+      socket
+      |> assign(:project_tab, project_tab)
+      |> maybe_load_diagnostics(project_tab)
+      |> maybe_load_project_knowledge(project_tab)
+
+    {:noreply, socket}
   end
 
   def handle_event("update_decomp_goal", %{"goal" => goal}, socket) do
@@ -645,6 +690,106 @@ defmodule OrchidWeb.AgentLive do
 
   def handle_event("update_decomp_reasoning_effort", %{"reasoning_effort" => effort}, socket) do
     {:noreply, assign(socket, :decomp_reasoning_effort, parse_decomp_reasoning_effort(effort))}
+  end
+
+  def handle_event("refresh_diagnostics", _params, socket) do
+    {:noreply, refresh_diagnostics(socket)}
+  end
+
+  def handle_event("show_new_project_note", _params, socket) do
+    {:noreply, assign(socket, creating_project_note: true, project_note_name: "", project_note_content: "")}
+  end
+
+  def handle_event("cancel_new_project_note", _params, socket) do
+    {:noreply, assign(socket, creating_project_note: false, project_note_name: "", project_note_content: "")}
+  end
+
+  def handle_event("update_project_note_name", %{"name" => name}, socket) do
+    {:noreply, assign(socket, :project_note_name, name)}
+  end
+
+  def handle_event("update_project_note_content", %{"content" => content}, socket) do
+    {:noreply, assign(socket, :project_note_content, content)}
+  end
+
+  def handle_event("create_project_note", _params, socket) do
+    project_id = socket.assigns.current_project
+    name = String.trim(socket.assigns.project_note_name)
+    content = String.trim(socket.assigns.project_note_content)
+
+    cond do
+      is_nil(project_id) ->
+        {:noreply, socket}
+
+      name == "" ->
+        {:noreply, socket}
+
+      true ->
+        {:ok, _note} =
+          Orchid.Object.create(:markdown, name, content,
+            metadata: %{project_id: project_id, category: "Project Notes"}
+          )
+
+        {:noreply,
+         socket
+         |> assign(:creating_project_note, false)
+         |> assign(:project_note_name, "")
+         |> assign(:project_note_content, "")
+         |> refresh_project_knowledge()}
+    end
+  end
+
+  def handle_event("delete_project_note", %{"id" => id}, socket) do
+    Orchid.Object.delete(id)
+    {:noreply, refresh_project_knowledge(socket)}
+  end
+
+  def handle_event("show_new_project_fact", _params, socket) do
+    {:noreply, assign(socket, creating_project_fact: true, project_fact_name: "", project_fact_value: "")}
+  end
+
+  def handle_event("cancel_new_project_fact", _params, socket) do
+    {:noreply, assign(socket, creating_project_fact: false, project_fact_name: "", project_fact_value: "")}
+  end
+
+  def handle_event("update_project_fact_name", %{"name" => name}, socket) do
+    {:noreply, assign(socket, :project_fact_name, name)}
+  end
+
+  def handle_event("update_project_fact_value", %{"value" => value}, socket) do
+    {:noreply, assign(socket, :project_fact_value, value)}
+  end
+
+  def handle_event("create_project_fact", _params, socket) do
+    project_id = socket.assigns.current_project
+    name = String.trim(socket.assigns.project_fact_name)
+    value = String.trim(socket.assigns.project_fact_value)
+
+    cond do
+      is_nil(project_id) ->
+        {:noreply, socket}
+
+      name == "" or value == "" ->
+        {:noreply, socket}
+
+      true ->
+        {:ok, _fact} =
+          Orchid.Object.create(:fact, name, value,
+            metadata: %{project_id: project_id, category: "Project Facts", scope: :project}
+          )
+
+        {:noreply,
+         socket
+         |> assign(:creating_project_fact, false)
+         |> assign(:project_fact_name, "")
+         |> assign(:project_fact_value, "")
+         |> refresh_project_knowledge()}
+    end
+  end
+
+  def handle_event("delete_project_fact", %{"id" => id}, socket) do
+    Orchid.Object.delete(id)
+    {:noreply, refresh_project_knowledge(socket)}
   end
 
   def handle_event("run_decomposition_test", params, socket) do
@@ -963,6 +1108,28 @@ defmodule OrchidWeb.AgentLive do
       end
 
     {:noreply, socket}
+  end
+
+  def handle_info({:diagnostics_summary_done, excerpt, {:ok, summary}, fetched_at}, socket) do
+    {:noreply,
+     assign(socket,
+       diagnostics_running: false,
+       diagnostics_log_excerpt: excerpt,
+       diagnostics_summary: summary,
+       diagnostics_error: nil,
+       diagnostics_updated_at: fetched_at
+     )}
+  end
+
+  def handle_info({:diagnostics_summary_done, excerpt, {:error, reason}, fetched_at}, socket) do
+    {:noreply,
+     assign(socket,
+       diagnostics_running: false,
+       diagnostics_log_excerpt: excerpt,
+       diagnostics_summary: nil,
+       diagnostics_error: format_diagnostics_error(reason),
+       diagnostics_updated_at: fetched_at
+     )}
   end
 
   def handle_info(:poll_agent_status, socket) do
@@ -1405,6 +1572,18 @@ defmodule OrchidWeb.AgentLive do
                     phx-click="set_project_tab"
                     phx-value-tab="decomposition"
                   >Decomposition Lab</button>
+                  <button
+                    class={"btn btn-secondary btn-sm"}
+                    style={"padding: 0.2rem 0.6rem; font-size: 0.75rem; #{if @project_tab == :knowledge, do: "border-color: #58a6ff; color: #58a6ff;", else: ""}"}
+                    phx-click="set_project_tab"
+                    phx-value-tab="knowledge"
+                  >Knowledge</button>
+                  <button
+                    class={"btn btn-secondary btn-sm"}
+                    style={"padding: 0.2rem 0.6rem; font-size: 0.75rem; #{if @project_tab == :diagnostics, do: "border-color: #58a6ff; color: #58a6ff;", else: ""}"}
+                    phx-click="set_project_tab"
+                    phx-value-tab="diagnostics"
+                  >Diagnostics</button>
                 </div>
 
                 <%= if @project_tab == :goals do %>
@@ -1692,6 +1871,7 @@ defmodule OrchidWeb.AgentLive do
                   <% end %>
                 </div>
                 <% else %>
+                <%= if @project_tab == :decomposition do %>
                 <div class="goals-section" style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
                   <form phx-submit="run_decomposition_test">
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.75rem;">
@@ -1804,6 +1984,179 @@ defmodule OrchidWeb.AgentLive do
                     <div style="color: #8b949e; font-size: 0.85rem;">No run yet.</div>
                   <% end %>
                 </div>
+                <% else %>
+                <%= if @project_tab == :knowledge do %>
+                <div class="goals-section" style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0.75rem;">
+                    <div style="background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 0.75rem;">
+                      <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.75rem;">
+                        <div>
+                          <h3 style="color: #c9d1d9; margin: 0; font-size: 1rem;">Project Notes</h3>
+                          <div style="color: #8b949e; font-size: 0.8rem; margin-top: 0.2rem;">
+                            Markdown notes scoped to this project.
+                          </div>
+                        </div>
+                        <%= if not @creating_project_note do %>
+                          <button class="btn btn-secondary btn-sm" type="button" phx-click="show_new_project_note">+ Note</button>
+                        <% end %>
+                      </div>
+
+                      <%= if @creating_project_note do %>
+                        <form phx-submit="create_project_note" style="margin-bottom: 0.75rem;">
+                          <input
+                            type="text"
+                            name="name"
+                            value={@project_note_name}
+                            phx-change="update_project_note_name"
+                            placeholder="Note title"
+                            class="sidebar-search"
+                            style="width: 100%; margin-bottom: 0.5rem;"
+                          />
+                          <textarea
+                            name="content"
+                            phx-change="update_project_note_content"
+                            class="sidebar-search"
+                            placeholder="What should Orchid remember about this project?"
+                            style="width: 100%; min-height: 8rem; resize: vertical; margin-bottom: 0.5rem;"
+                          ><%= @project_note_content %></textarea>
+                          <div style="display: flex; gap: 0.5rem;">
+                            <button type="submit" class="btn btn-sm">Save Note</button>
+                            <button type="button" class="btn btn-secondary btn-sm" phx-click="cancel_new_project_note">Cancel</button>
+                          </div>
+                        </form>
+                      <% end %>
+
+                      <%= if @project_notes == [] do %>
+                        <div style="color: #8b949e; font-size: 0.85rem;">No project notes yet.</div>
+                      <% else %>
+                        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                          <%= for note <- @project_notes do %>
+                            <div style="background: #161b22; border: 1px solid #30363d; border-radius: 4px; padding: 0.65rem;">
+                              <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.35rem;">
+                                <div style="color: #c9d1d9; font-weight: 500;"><%= note.name %></div>
+                                <button class="btn btn-danger btn-sm" type="button" phx-click="delete_project_note" phx-value-id={note.id}>Delete</button>
+                              </div>
+                              <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.35rem;">
+                                Updated <%= short_datetime(note.updated_at) %>
+                              </div>
+                              <div style="color: #c9d1d9; white-space: pre-wrap; font-size: 0.85rem;"><%= note.content %></div>
+                            </div>
+                          <% end %>
+                        </div>
+                      <% end %>
+                    </div>
+
+                    <div style="background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 0.75rem;">
+                      <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.75rem;">
+                        <div>
+                          <h3 style="color: #c9d1d9; margin: 0; font-size: 1rem;">Project Facts</h3>
+                          <div style="color: #8b949e; font-size: 0.8rem; margin-top: 0.2rem;">
+                            Short structured values for this project only.
+                          </div>
+                        </div>
+                        <%= if not @creating_project_fact do %>
+                          <button class="btn btn-secondary btn-sm" type="button" phx-click="show_new_project_fact">+ Fact</button>
+                        <% end %>
+                      </div>
+
+                      <%= if @creating_project_fact do %>
+                        <form phx-submit="create_project_fact" style="margin-bottom: 0.75rem;">
+                          <input
+                            type="text"
+                            name="name"
+                            value={@project_fact_name}
+                            phx-change="update_project_fact_name"
+                            placeholder="Fact key"
+                            class="sidebar-search"
+                            style="width: 100%; margin-bottom: 0.5rem;"
+                          />
+                          <textarea
+                            name="value"
+                            phx-change="update_project_fact_value"
+                            class="sidebar-search"
+                            placeholder="Fact value"
+                            style="width: 100%; min-height: 6rem; resize: vertical; margin-bottom: 0.5rem;"
+                          ><%= @project_fact_value %></textarea>
+                          <div style="display: flex; gap: 0.5rem;">
+                            <button type="submit" class="btn btn-sm">Save Fact</button>
+                            <button type="button" class="btn btn-secondary btn-sm" phx-click="cancel_new_project_fact">Cancel</button>
+                          </div>
+                        </form>
+                      <% end %>
+
+                      <%= if @project_facts == [] do %>
+                        <div style="color: #8b949e; font-size: 0.85rem;">No project facts yet.</div>
+                      <% else %>
+                        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                          <%= for fact <- @project_facts do %>
+                            <div style="background: #161b22; border: 1px solid #30363d; border-radius: 4px; padding: 0.65rem;">
+                              <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.35rem;">
+                                <div style="color: #58a6ff; font-weight: 500;"><%= fact.name %></div>
+                                <button class="btn btn-danger btn-sm" type="button" phx-click="delete_project_fact" phx-value-id={fact.id}>Delete</button>
+                              </div>
+                              <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.35rem;">
+                                Updated <%= short_datetime(fact.updated_at) %>
+                              </div>
+                              <div style="color: #c9d1d9; white-space: pre-wrap; font-size: 0.85rem;"><%= fact.content %></div>
+                            </div>
+                          <% end %>
+                        </div>
+                      <% end %>
+                    </div>
+                  </div>
+                </div>
+                <% else %>
+                <div class="goals-section" style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.75rem;">
+                    <div>
+                      <h3 style="color: #c9d1d9; margin: 0; font-size: 1rem;">Diagnostics</h3>
+                      <div style="color: #8b949e; font-size: 0.8rem; margin-top: 0.2rem;">
+                        Source: <%= @diagnostics_log_path %>
+                      </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                      <%= if @diagnostics_updated_at do %>
+                        <span style="color: #8b949e; font-size: 0.8rem;">
+                          <%= short_time(@diagnostics_updated_at) %>
+                        </span>
+                      <% end %>
+                      <button class="btn btn-sm" type="button" phx-click="refresh_diagnostics" disabled={@diagnostics_running}>
+                        <%= if @diagnostics_running, do: "Refreshing...", else: "Refresh" %>
+                      </button>
+                    </div>
+                  </div>
+
+                  <%= if @diagnostics_error do %>
+                    <div style="background: #3d1114; color: #f85149; border: 1px solid #f85149; border-radius: 4px; padding: 0.5rem; font-size: 0.85rem; margin-bottom: 0.75rem;">
+                      <%= @diagnostics_error %>
+                    </div>
+                  <% end %>
+
+                  <div style="display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem;">
+                    <div style="background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 0.75rem;">
+                      <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.35rem;">Haiku Summary</div>
+                      <div style="color: #c9d1d9; white-space: pre-wrap; font-size: 0.85rem;">
+                        <%= cond do %>
+                          <% @diagnostics_running and is_nil(@diagnostics_summary) -> %>
+                            Summarizing latest log tail...
+                          <% is_binary(@diagnostics_summary) and String.trim(@diagnostics_summary) != "" -> %>
+                            <%= @diagnostics_summary %>
+                          <% @diagnostics_log_excerpt in [nil, ""] -> %>
+                            No log data loaded yet.
+                          <% true -> %>
+                            Summary unavailable.
+                        <% end %>
+                      </div>
+                    </div>
+
+                    <div style="background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 0.75rem;">
+                      <div style="color: #8b949e; font-size: 0.75rem; margin-bottom: 0.35rem;">Recent Log Lines</div>
+                      <pre style="margin: 0; white-space: pre-wrap; color: #c9d1d9; font-size: 0.82rem; max-height: 26rem; overflow: auto;"><%= @diagnostics_log_excerpt || "No log data loaded yet." %></pre>
+                    </div>
+                  </div>
+                </div>
+                <% end %>
+                <% end %>
                 <% end %>
 
                 <h3 style="color: #c9d1d9; margin-bottom: 0.5rem;">Agents</h3>
@@ -2110,6 +2463,22 @@ defmodule OrchidWeb.AgentLive do
     end
   end
 
+  defp refresh_project_knowledge(socket) do
+    case socket.assigns.current_project do
+      nil ->
+        assign(socket, project_notes: [], project_facts: [])
+
+      project_id ->
+        assign(socket,
+          project_notes: list_project_notes(project_id),
+          project_facts: list_project_facts(project_id)
+        )
+    end
+  end
+
+  defp maybe_load_project_knowledge(socket, :knowledge), do: refresh_project_knowledge(socket)
+  defp maybe_load_project_knowledge(socket, _tab), do: socket
+
   defp filter_agents(agents, nil), do: agents
 
   defp filter_agents(agents, current_project) do
@@ -2140,8 +2509,20 @@ defmodule OrchidWeb.AgentLive do
 
   defp short_agent_id(id), do: inspect(id)
 
+  defp short_datetime(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M")
+  defp short_datetime(_), do: "--"
   defp short_time(%DateTime{} = dt), do: Calendar.strftime(dt, "%H:%M:%S")
   defp short_time(_), do: "--:--:--"
+
+  defp list_project_notes(project_id) do
+    Orchid.Object.list_markdown_for_project(project_id)
+    |> Enum.sort_by(& &1.updated_at, {:desc, DateTime})
+  end
+
+  defp list_project_facts(project_id) do
+    Orchid.Object.list_facts_for_project(project_id)
+    |> Enum.sort_by(& &1.updated_at, {:desc, DateTime})
+  end
 
   defp compute_goal_graph(goals) do
     id_set = MapSet.new(goals, & &1.id)
@@ -2340,6 +2721,114 @@ defmodule OrchidWeb.AgentLive do
       if category == "General", do: {0, category}, else: {1, category}
     end)
   end
+
+  defp maybe_load_diagnostics(socket, :diagnostics), do: refresh_diagnostics(socket)
+  defp maybe_load_diagnostics(socket, _tab), do: socket
+
+  defp refresh_diagnostics(socket) do
+    fetched_at = DateTime.utc_now()
+    log_path = socket.assigns.diagnostics_log_path
+
+    case read_recent_log(log_path) do
+      {:ok, excerpt} ->
+        socket =
+          assign(socket,
+            diagnostics_running: true,
+            diagnostics_log_excerpt: excerpt,
+            diagnostics_summary: nil,
+            diagnostics_error: nil,
+            diagnostics_updated_at: fetched_at
+          )
+
+        pid = self()
+
+        Task.start(fn ->
+          result = summarize_diagnostics_excerpt(excerpt)
+          send(pid, {:diagnostics_summary_done, excerpt, result, fetched_at})
+        end)
+
+        socket
+
+      {:error, reason} ->
+        assign(socket,
+          diagnostics_running: false,
+          diagnostics_log_excerpt: nil,
+          diagnostics_summary: nil,
+          diagnostics_error: format_diagnostics_error(reason),
+          diagnostics_updated_at: fetched_at
+        )
+    end
+  end
+
+  defp diagnostics_log_path do
+    Path.join(Application.get_env(:orchid, :data_dir, "priv/data"), "server.log")
+  end
+
+  defp read_recent_log(path) do
+    with true <- File.exists?(path) or {:error, :missing_log},
+         {:ok, raw} <- File.read(path) do
+      excerpt =
+        raw
+        |> String.split("\n")
+        |> Enum.take(-@diagnostics_tail_lines)
+        |> Enum.join("\n")
+        |> String.trim()
+        |> truncate(@diagnostics_max_chars)
+
+      {:ok, excerpt}
+    else
+      {:error, reason} -> {:error, reason}
+      false -> {:error, :missing_log}
+    end
+  end
+
+  defp summarize_diagnostics_excerpt(""), do: {:ok, "The log is currently empty."}
+  defp summarize_diagnostics_excerpt(nil), do: {:ok, "The log is currently empty."}
+
+  defp summarize_diagnostics_excerpt(excerpt) do
+    context = %{
+      system: """
+      You summarize recent server diagnostics.
+      Be concrete and concise.
+      Focus on the latest failures, probable cause, and the next thing to inspect.
+      Do not call tools.
+      """,
+      messages: [
+        %{
+          role: :user,
+          content: """
+          Summarize these recent `server.log` lines.
+
+          Requirements:
+          - 3 short paragraphs max
+          - mention the most recent error first
+          - include the probable cause if it is clear
+          - say "unclear" when the cause is not supported by the log
+
+          Log tail:
+          #{excerpt}
+          """
+        }
+      ],
+      objects: "",
+      memory: %{}
+    }
+
+    case Orchid.LLM.chat(
+           %{provider: :cli, model: :haiku, max_turns: 4, max_tokens: 500, disable_tools: true},
+           context
+         ) do
+      {:ok, %{content: content}} -> {:ok, String.trim(content)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp format_diagnostics_error({:api_error, message}) when is_binary(message),
+    do: truncate(message, 300)
+
+  defp format_diagnostics_error(:missing_log), do: "server.log was not found."
+  defp format_diagnostics_error(reason) when is_binary(reason), do: reason
+  defp format_diagnostics_error(reason), do: "Diagnostics refresh failed: #{inspect(reason)}"
 
   defp parse_decomp_model("opus"), do: :opus
   defp parse_decomp_model("sonnet"), do: :sonnet

@@ -141,6 +141,14 @@ defmodule Orchid.Object do
   end
 
   @doc """
+  List markdown objects scoped to a specific project.
+  """
+  def list_markdown_for_project(project_id) do
+    list()
+    |> Enum.filter(fn obj -> obj.type == :markdown and obj.metadata[:project_id] == project_id end)
+  end
+
+  @doc """
   List all agent templates.
   """
   def list_agent_templates do
@@ -152,6 +160,13 @@ defmodule Orchid.Object do
   """
   def list_facts do
     list() |> Enum.filter(fn obj -> obj.type == :fact end)
+  end
+
+  @doc """
+  List fact objects scoped to a specific project.
+  """
+  def list_facts_for_project(project_id) do
+    list_facts() |> Enum.filter(fn obj -> obj.metadata[:project_id] == project_id end)
   end
 
   @doc """

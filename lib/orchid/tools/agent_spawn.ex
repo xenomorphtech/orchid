@@ -65,6 +65,11 @@ defmodule Orchid.Tools.AgentSpawn do
             else: config
 
         config =
+          if template.metadata[:reasoning_effort],
+            do: Map.put(config, :reasoning_effort, template.metadata[:reasoning_effort]),
+            else: config
+
+        config =
           if is_list(template.metadata[:allowed_tools]),
             do: Map.put(config, :allowed_tools, template.metadata[:allowed_tools]),
             else: config

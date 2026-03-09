@@ -196,6 +196,7 @@ defmodule Orchid.LLM.Codex do
     # Model
     args = case config[:model] do
       nil -> args
+      :gpt54 -> args ++ ["-m", "gpt-5.4"]
       :gpt53 -> args ++ ["-m", "gpt-5.3-codex"]
       model when is_atom(model) -> args ++ ["-m", to_string(model)]
       model when is_binary(model) -> args ++ ["-m", model]
