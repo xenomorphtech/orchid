@@ -106,12 +106,17 @@ defmodule Orchid.GoalWatcher do
 
     if orphaned != [] do
       log(
-        "project \"#{project.name}\": #{length(orphaned)} goal(s) assigned to dead agents — clearing assignments"
+        "project \"#{project.name}\": #{length(orphaned)} goal(s) assigned to dead agents — clearing assignments",
+        project_id: project.id
       )
 
       for goal <- orphaned do
         Orchid.Object.update_metadata(goal.id, %{agent_id: nil})
-        log("  cleared dead agent from goal \"#{goal.name}\" [#{goal.id}]")
+
+        log("  cleared dead agent from goal \"#{goal.name}\" [#{goal.id}]",
+          project_id: project.id,
+          metadata: %{goal_id: goal.id}
+        )
       end
     end
 
@@ -134,7 +139,8 @@ defmodule Orchid.GoalWatcher do
         end
 
       log(
-        "project \"#{project.name}\" has #{length(pending)} pending goal(s), 0 agents — spawning planner"
+        "project \"#{project.name}\" has #{length(pending)} pending goal(s), 0 agents — spawning planner",
+        project_id: project.id
       )
 
       spawn_planner(project, pending)
@@ -174,23 +180,34 @@ defmodule Orchid.GoalWatcher do
 
             if last_role in [:user, :tool] do
               log(
-                "agent #{agent_state.id} (#{tag}) idle, last msg=#{last_role}, goals: #{goal_names} — retrying"
+                "agent #{agent_state.id} (#{tag}) idle, last msg=#{last_role}, goals: #{goal_names} — retrying",
+                project_id: project.id,
+                agent_id: agent_state.id
               )
 
               Task.start(fn ->
                 case Orchid.Agent.retry(agent_state.id) do
                   {:ok, response} ->
                     preview = response |> String.slice(0, 200) |> String.replace("\n", " ")
-                    log("agent #{agent_state.id} (#{tag}) retry responded: #{preview}")
+
+                    log("agent #{agent_state.id} (#{tag}) retry responded: #{preview}",
+                      project_id: project.id,
+                      agent_id: agent_state.id
+                    )
 
                   {:error, reason} ->
                     log(
-                      "ERROR: agent #{agent_state.id} (#{tag}) retry failed: #{inspect(reason)}"
+                      "ERROR: agent #{agent_state.id} (#{tag}) retry failed: #{inspect(reason)}",
+                      project_id: project.id,
+                      agent_id: agent_state.id
                     )
                 end
               end)
             else
-              log("agent #{agent_state.id} (#{tag}) idle, goals: #{goal_names} — re-kicking")
+              log("agent #{agent_state.id} (#{tag}) idle, goals: #{goal_names} — re-kicking",
+                project_id: project.id,
+                agent_id: agent_state.id
+              )
 
               Task.start(fn ->
                 message = build_rekick_message(agent_state, re_kickable_goals)
@@ -198,11 +215,17 @@ defmodule Orchid.GoalWatcher do
                 case Orchid.Agent.stream(agent_state.id, message, fn _chunk -> :ok end) do
                   {:ok, response} ->
                     preview = response |> String.slice(0, 200) |> String.replace("\n", " ")
-                    log("agent #{agent_state.id} (#{tag}) re-kick responded: #{preview}")
+
+                    log("agent #{agent_state.id} (#{tag}) re-kick responded: #{preview}",
+                      project_id: project.id,
+                      agent_id: agent_state.id
+                    )
 
                   {:error, reason} ->
                     log(
-                      "ERROR: agent #{agent_state.id} (#{tag}) re-kick failed: #{inspect(reason)}"
+                      "ERROR: agent #{agent_state.id} (#{tag}) re-kick failed: #{inspect(reason)}",
+                      project_id: project.id,
+                      agent_id: agent_state.id
                     )
                 end
               end)
@@ -220,7 +243,9 @@ defmodule Orchid.GoalWatcher do
   defp spawn_planner(project, pending_goals) do
     case find_planner_template() do
       nil ->
-        log("ERROR: no Planner template found, skipping project \"#{project.name}\"")
+        log("ERROR: no Planner template found, skipping project \"#{project.name}\"",
+          project_id: project.id
+        )
 
       planner ->
         goal_summary = format_goal_summary(pending_goals)
@@ -229,10 +254,12 @@ defmodule Orchid.GoalWatcher do
         # Ensure sandbox is running before spawning agent
         case Orchid.Projects.ensure_sandbox(project.id) do
           {:ok, _} ->
-            log("sandbox ready for project \"#{project.name}\"")
+            log("sandbox ready for project \"#{project.name}\"", project_id: project.id)
 
           {:error, reason} ->
-            log("WARNING: sandbox failed for project \"#{project.name}\": #{inspect(reason)}")
+            log("WARNING: sandbox failed for project \"#{project.name}\": #{inspect(reason)}",
+              project_id: project.id
+            )
         end
 
         config = %{
@@ -259,18 +286,29 @@ defmodule Orchid.GoalWatcher do
 
         case Orchid.Agent.create(config) do
           {:ok, agent_id} ->
-            log("spawned planner #{agent_id} for project \"#{project.name}\"")
+            log("spawned planner #{agent_id} for project \"#{project.name}\"",
+              project_id: project.id,
+              agent_id: agent_id
+            )
 
             # Assign all unassigned goals to this planner
             for goal <- pending_goals, is_nil(goal.metadata[:agent_id]) do
               Orchid.Object.update_metadata(goal.id, %{agent_id: agent_id})
-              log("  assigned goal \"#{goal.name}\" [#{goal.id}] -> #{agent_id}")
+
+              log("  assigned goal \"#{goal.name}\" [#{goal.id}] -> #{agent_id}",
+                project_id: project.id,
+                agent_id: agent_id,
+                metadata: %{goal_id: goal.id}
+              )
             end
 
             message = planner_kickoff_message(project.name, project.content, goal_summary)
 
             Task.start(fn ->
-              log("streaming kickoff to planner #{agent_id}...")
+              log("streaming kickoff to planner #{agent_id}...",
+                project_id: project.id,
+                agent_id: agent_id
+              )
 
               result =
                 Orchid.Agent.stream(agent_id, String.trim(message), fn _chunk -> :ok end)
@@ -278,17 +316,29 @@ defmodule Orchid.GoalWatcher do
               case result do
                 {:ok, response} ->
                   preview = response |> String.slice(0, 200) |> String.replace("\n", " ")
-                  log("planner #{agent_id} responded: #{preview}")
+
+                  log("planner #{agent_id} responded: #{preview}",
+                    project_id: project.id,
+                    agent_id: agent_id
+                  )
 
                 {:error, reason} ->
-                  log("ERROR: planner #{agent_id} stream failed: #{inspect(reason)}")
+                  log("ERROR: planner #{agent_id} stream failed: #{inspect(reason)}",
+                    project_id: project.id,
+                    agent_id: agent_id
+                  )
               end
             end)
 
-            log("sent kickoff message to #{agent_id}")
+            log("sent kickoff message to #{agent_id}",
+              project_id: project.id,
+              agent_id: agent_id
+            )
 
           {:error, reason} ->
-            log("ERROR: failed to spawn agent for \"#{project.name}\": #{inspect(reason)}")
+            log("ERROR: failed to spawn agent for \"#{project.name}\": #{inspect(reason)}",
+              project_id: project.id
+            )
         end
     end
   end
@@ -361,11 +411,18 @@ defmodule Orchid.GoalWatcher do
     tname || "#{provider}#{if model, do: "/#{model}", else: ""}"
   end
 
-  defp log(msg) do
+  defp log(msg, opts \\ []) do
     ts = DateTime.utc_now() |> DateTime.to_string()
     line = "[#{ts}] GoalWatcher: #{msg}\n"
     File.write!(@log_file, line, [:append])
-    Logger.info("GoalWatcher: #{msg}")
+    rendered = "GoalWatcher: #{msg}"
+    Logger.info(rendered)
+
+    Orchid.EventLog.info(:goal_watcher, rendered,
+      project_id: Keyword.get(opts, :project_id),
+      agent_id: Keyword.get(opts, :agent_id),
+      metadata: Keyword.get(opts, :metadata, %{})
+    )
   end
 
   defp build_rekick_message(agent_state, assigned_pending) do

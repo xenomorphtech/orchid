@@ -23,6 +23,22 @@ defmodule OrchidWeb.AgentLiveTest do
     :ok
   end
 
+  test "mount preloads recent events for the panel" do
+    Orchid.EventLog.clear()
+    Orchid.EventLog.info(:test, "panel event")
+
+    on_exit(fn ->
+      Orchid.EventLog.clear()
+    end)
+
+    assert {:ok, socket} =
+             OrchidWeb.AgentLive.mount(%{}, %{}, %Socket{assigns: %{__changed__: %{}}})
+
+    assert Enum.any?(socket.assigns.event_log_entries, fn event ->
+             event.message == "panel event"
+           end)
+  end
+
   test "chat submit uses the current form value immediately" do
     socket = %Socket{
       assigns: %{

@@ -137,7 +137,7 @@ defmodule Orchid.Sandbox.Overlay do
       args = ["-n", "--no-heading", pattern, dir]
       args = if glob, do: args ++ ["--glob", glob], else: args
 
-      case System.cmd("rg", args, stderr_to_stdout: true) do
+      case Orchid.OS.Command.run("rg", args, stderr_to_stdout: true) do
         {output, 0} -> String.trim(output)
         _ -> ""
       end

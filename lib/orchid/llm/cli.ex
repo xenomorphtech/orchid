@@ -28,49 +28,48 @@ defmodule Orchid.LLM.CLI do
 
     Logger.debug("Claude CLI args: #{inspect(args)}")
 
-    # Run in a Task to avoid blocking the caller
-    task =
-      Task.async(fn ->
-        cmd = build_shell_command(args, config) <> " 2>&1"
-        Logger.info("CLI exec (full): #{cmd}")
-        output = :os.cmd(String.to_charlist(cmd))
-        result = to_string(output) |> String.trim()
-        Logger.info("CLI result (#{byte_size(result)} bytes): #{String.slice(result, 0, 500)}")
-        result
-      end)
+    with {:ok, spec} <- build_command_spec(config, args) do
+      try do
+        # Run in a Task so the owning process controls the CLI subprocess lifetime.
+        task =
+          Task.async(fn ->
+            command_message = "CLI exec (full): #{format_command_spec(spec)}"
+            Logger.info(command_message)
 
-    # Orchestrators with MCP tools need much longer — they spawn agents and wait
-    timeout = if config[:use_orchid_tools], do: 3_600_000, else: 600_000
+            Orchid.EventLog.info(:cli, command_message,
+              project_id: config[:project_id],
+              agent_id: config[:agent_id],
+              metadata: %{
+                model: config[:model],
+                output_format: config[:output_format]
+              }
+            )
 
-    case Task.yield(task, timeout) || Task.shutdown(task) do
-      {:ok, ""} ->
-        Logger.error("CLI returned empty response")
-        {:error, "CLI returned empty response"}
+            {output, status} = run_command(spec)
+            result = String.trim(output)
 
-      {:ok, content} ->
-        if String.starts_with?(content, "Error:") or String.starts_with?(content, "error:") do
-          if not retried? and oauth_token_expired_error?(content) do
-            Logger.warning("CLI auth expired; forcing token refresh and retrying once")
+            Logger.info(
+              "CLI result (#{byte_size(result)} bytes, exit=#{status}): #{String.slice(result, 0, 500)}"
+            )
 
-            case Orchid.LLM.TokenRefresh.force_refresh() do
-              {:ok, _} ->
-                do_chat(config, context, true)
+            {result, status}
+          end)
 
-              {:error, reason} ->
-                Logger.error("CLI token refresh failed: #{inspect(reason)}")
-                {:error, {:refresh_failed, reason}}
-            end
-          else
-            Logger.error("CLI error: #{String.slice(content, 0, 500)}")
-            {:error, {:api_error, content}}
-          end
-        else
-          {:ok, %{content: content, tool_calls: nil}}
+        # Orchestrators with MCP tools need much longer — they spawn agents and wait
+        timeout = if config[:use_orchid_tools], do: 3_600_000, else: 600_000
+
+        case Task.yield(task, timeout) do
+          {:ok, {content, status}} ->
+            handle_cli_result(content, status, config, context, retried?)
+
+          nil ->
+            Task.shutdown(task, :brutal_kill)
+            Logger.error("CLI timeout after #{div(timeout, 1000)}s")
+            {:error, :timeout}
         end
-
-      nil ->
-        Logger.error("CLI timeout after #{div(timeout, 1000)}s")
-        {:error, :timeout}
+      after
+        cleanup_command_spec(spec)
+      end
     end
   end
 
@@ -91,39 +90,62 @@ defmodule Orchid.LLM.CLI do
     end
   end
 
-  defp build_shell_command(args, config) do
-    claude_path = System.find_executable("claude") || "claude"
+  defp build_command_spec(config, args) do
+    claude_path = System.find_executable("claude")
     run_in_container = run_in_container?(config)
 
     cond do
       # Orchestrator with Orchid tools — run on host with MCP server
       config[:use_orchid_tools] && config[:project_id] ->
         mcp_config = orchid_mcp_config(config[:project_id], config[:agent_id])
-        escaped_args = Enum.map(args, &shell_escape/1)
 
-        "CLAUDECODE= #{claude_path} #{Enum.join(escaped_args, " ")} --mcp-config #{shell_escape(mcp_config)} --strict-mcp-config --tools ''"
+        with_executable(claude_path, "claude", fn executable ->
+          {:ok,
+           %{
+             command: executable,
+             args:
+               args ++
+                 ["--mcp-config", mcp_config, "--strict-mcp-config", "--tools", ""],
+             env: [{"CLAUDECODE", ""}],
+             cleanup_paths: [mcp_config]
+           }}
+        end)
 
       # Worker agent in VM mode — run inside sandbox container
       config[:project_id] && run_in_container ->
         container = "orchid-project-#{config[:project_id]}"
-        escaped_args = Enum.map(args, &shell_escape/1)
-        inner_cmd = "cd /workspace && claude #{Enum.join(escaped_args, " ")}"
-        "podman exec #{container} sh -c #{shell_escape(inner_cmd)}"
+        podman_path = System.find_executable("podman")
+
+        with_executable(podman_path, "podman", fn executable ->
+          {:ok,
+           %{
+             command: executable,
+             args: ["exec", "-w", "/workspace", container, "claude"] ++ args
+           }}
+        end)
 
       # Worker agent in host mode — run on host in project directory
       config[:project_id] ->
-        escaped_args = Enum.map(args, &shell_escape/1)
         workspace = Orchid.Project.files_path(config[:project_id]) |> Path.expand()
 
-        host_cmd =
-          "cd #{shell_escape(workspace)} && #{claude_path} #{Enum.join(escaped_args, " ")}"
-
-        "sh -c #{shell_escape(host_cmd)}"
+        with_executable(claude_path, "claude", fn executable ->
+          {:ok,
+           %{
+             command: executable,
+             args: args,
+             cd: workspace
+           }}
+        end)
 
       # No project — run on host
       true ->
-        escaped_args = Enum.map(args, &shell_escape/1)
-        "#{claude_path} #{Enum.join(escaped_args, " ")}"
+        with_executable(claude_path, "claude", fn executable ->
+          {:ok,
+           %{
+             command: executable,
+             args: args
+           }}
+        end)
     end
   end
 
@@ -155,8 +177,77 @@ defmodule Orchid.LLM.CLI do
     path
   end
 
+  defp run_command(spec) do
+    Orchid.OS.Command.run(spec.command, spec.args,
+      cd: spec[:cd],
+      env: spec[:env],
+      stderr_to_stdout: true
+    )
+  end
+
+  defp handle_cli_result("", _status, _config, _context, _retried?) do
+    Logger.error("CLI returned empty response")
+    {:error, "CLI returned empty response"}
+  end
+
+  defp handle_cli_result(content, status, config, context, retried?) do
+    cond do
+      not retried? and oauth_token_expired_error?(content) ->
+        Logger.warning("CLI auth expired; forcing token refresh and retrying once")
+
+        case Orchid.LLM.TokenRefresh.force_refresh() do
+          {:ok, _} ->
+            do_chat(config, context, true)
+
+          {:error, reason} ->
+            Logger.error("CLI token refresh failed: #{inspect(reason)}")
+            {:error, {:refresh_failed, reason}}
+        end
+
+      status != 0 ->
+        Logger.error("CLI exited with status #{status}: #{String.slice(content, 0, 500)}")
+        {:error, {:exit_status, status, content}}
+
+      String.starts_with?(content, "Error:") or String.starts_with?(content, "error:") ->
+        Logger.error("CLI error: #{String.slice(content, 0, 500)}")
+        {:error, {:api_error, content}}
+
+      true ->
+        {:ok, %{content: content, tool_calls: nil}}
+    end
+  end
+
+  defp with_executable(nil, name, _fun), do: {:error, "#{name} executable not found"}
+  defp with_executable(path, _name, fun), do: fun.(path)
+
+  defp cleanup_command_spec(spec) do
+    Enum.each(spec[:cleanup_paths] || [], fn path ->
+      File.rm(path)
+    end)
+  end
+
+  defp format_command_spec(spec) do
+    env =
+      spec[:env]
+      |> List.wrap()
+      |> Enum.map_join(" ", fn {key, value} -> "#{key}=#{shell_escape(value)}" end)
+
+    cmd =
+      [spec.command | spec.args]
+      |> Enum.map_join(" ", &shell_escape/1)
+
+    prefix =
+      case spec[:cd] do
+        nil -> nil
+        dir -> "cd #{shell_escape(dir)} &&"
+      end
+
+    [prefix, env, cmd]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join(" ")
+  end
+
   defp shell_escape(arg) do
-    # Escape single quotes and wrap in single quotes
     escaped = String.replace(arg, "'", "'\\''")
     "'#{escaped}'"
   end
