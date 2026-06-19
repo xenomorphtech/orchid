@@ -110,7 +110,25 @@ defmodule Orchid.Sandbox do
 
   # ── Client API: Data operations (bypass GenServer) ──
 
-  def exec(project_id, command, opts \\ []) do
+  def exec(project_id, command, opts \\ [])
+
+  def exec(_project_id, command, _opts) when not is_binary(command) do
+    {:error, {:invalid_command, command}}
+  end
+
+  def exec(_project_id, command, _opts) when is_binary(command) and byte_size(command) == 0 do
+    {:error, :empty_command}
+  end
+
+  def exec(project_id, command, opts) do
+    if String.trim(command) == "" do
+      {:error, :empty_command}
+    else
+      do_exec(project_id, command, opts)
+    end
+  end
+
+  defp do_exec(project_id, command, opts) do
     case overlay_method(project_id) do
       nil -> {:error, :sandbox_not_found}
       _method -> podman_exec(container_name(project_id), command, opts[:timeout] || 30_000)
