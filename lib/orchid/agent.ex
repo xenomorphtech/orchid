@@ -53,8 +53,9 @@ defmodule Orchid.Agent do
     config =
       Map.merge(
         %{
-          # Uses OAuth tokens (subscription-based)
-          provider: :oauth,
+          # Default to OpenRouter on the free Nex N2 Pro model — fully autonomous at zero token cost.
+          provider: :openrouter,
+          model: :nex_n2_pro,
           system_prompt: default_system_prompt()
         },
         config

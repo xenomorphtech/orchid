@@ -127,6 +127,13 @@ defmodule Orchid.LLM.Catalog do
       label: "Kimi K2.5",
       providers: %{openrouter: "moonshotai/kimi-k2.5"},
       contexts: [:decomp]
+    },
+    %{
+      id: :nex_n2_pro,
+      label: "Nex N2 Pro (free)",
+      providers: %{openrouter: "nex-agi/nex-n2-pro:free"},
+      aliases: ["nex-n2-pro", "nex-agi/nex-n2-pro", "nex-agi/nex-n2-pro:free"],
+      contexts: [:template, :decomp]
     }
   ]
 
@@ -134,7 +141,7 @@ defmodule Orchid.LLM.Catalog do
     oauth: :sonnet,
     gemini: :gemini_pro,
     cerebras: :llama_3_3_70b,
-    openrouter: :minimax_m2_5
+    openrouter: :nex_n2_pro
   }
 
   @providers_by_id Map.new(@providers, &{&1.id, &1})
