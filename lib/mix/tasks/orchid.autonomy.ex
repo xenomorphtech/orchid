@@ -13,19 +13,20 @@ defmodule Mix.Tasks.Orchid.Autonomy do
 
   @impl Mix.Task
   def run(args) do
-    {opts, _argv, invalid} = OptionParser.parse(args, strict: [runs: :integer])
+    {opts, _argv, invalid} = OptionParser.parse(args, strict: [runs: :integer, mode: :string])
     reject_invalid_options!(invalid)
 
     runs = Keyword.get(opts, :runs, 3)
     validate_runs!(runs)
+    mode = opts |> Keyword.get(:mode, "flat") |> parse_mode!()
 
     benchmarks = load_benchmarks()
-    report = build_report(benchmarks, runs)
+    report = build_report(benchmarks, runs, mode)
 
     write_report!(report)
 
     Mix.shell().info(
-      "orchid.autonomy: loaded #{length(benchmarks)} benchmark(s), #{runs} run(s) each; wrote #{@report_path}"
+      "orchid.autonomy: loaded #{length(benchmarks)} benchmark(s), #{runs} #{mode} run(s) each; wrote #{@report_path}"
     )
   end
 
@@ -53,6 +54,13 @@ defmodule Mix.Tasks.Orchid.Autonomy do
     Mix.raise("--runs must be an integer >= 3, got: #{inspect(runs)}")
   end
 
+  defp parse_mode!("flat"), do: :flat
+  defp parse_mode!("gvr"), do: :gvr
+
+  defp parse_mode!(mode) do
+    Mix.raise("--mode must be flat or gvr, got: #{inspect(mode)}")
+  end
+
   defp load_benchmark!(path) do
     case Code.eval_file(path) do
       {%Benchmark{} = benchmark, _binding} ->
@@ -66,12 +74,13 @@ defmodule Mix.Tasks.Orchid.Autonomy do
     end
   end
 
-  defp build_report(benchmarks, runs) do
-    benchmark_reports = Enum.map(benchmarks, &benchmark_report(&1, runs))
+  defp build_report(benchmarks, runs, mode) do
+    benchmark_reports = Enum.map(benchmarks, &benchmark_report(&1, runs, mode))
 
     %{
       generated_at: DateTime.utc_now() |> DateTime.to_iso8601(),
       status: suite_status(benchmark_reports),
+      runner_mode: mode,
       runs_per_benchmark: runs,
       benchmark_count: length(benchmarks),
       benchmarks: benchmark_reports,
@@ -80,17 +89,18 @@ defmodule Mix.Tasks.Orchid.Autonomy do
     }
   end
 
-  defp benchmark_report(%Benchmark{} = benchmark, runs) do
+  defp benchmark_report(%Benchmark{} = benchmark, runs, mode) do
     samples =
       1..runs
       |> Enum.map(fn run_index ->
-        case Runner.run(benchmark) do
+        case Runner.run(benchmark, mode: mode) do
           {:ok, result} ->
             try do
               score = Scorer.score(result)
 
               %{
                 run: run_index,
+                runner_mode: mode,
                 status: Map.get(result, :status, :unknown),
                 result: encode_run_result(result),
                 score: score
@@ -102,6 +112,7 @@ defmodule Mix.Tasks.Orchid.Autonomy do
           {:error, reason} ->
             %{
               run: run_index,
+              runner_mode: mode,
               status: :error,
               error: inspect(reason),
               score: %{unattended_depth: 0, goal_closure: false, recovery_rate: 0.0}
@@ -112,6 +123,7 @@ defmodule Mix.Tasks.Orchid.Autonomy do
     %{
       id: benchmark.id,
       category: benchmark.category,
+      runner_mode: mode,
       objective: benchmark.objective,
       max_steps: benchmark.max_steps,
       success_check: encode_success_check(benchmark.success_check),
@@ -127,6 +139,7 @@ defmodule Mix.Tasks.Orchid.Autonomy do
     %{
       project_id: Map.get(result, :project_id),
       agent_id: Map.get(result, :agent_id),
+      runner_mode: Map.get(result, :runner_mode),
       depth: Map.get(result, :depth, 0),
       closed: Map.get(result, :closed, false),
       recovered: Map.get(result, :recovered, []),

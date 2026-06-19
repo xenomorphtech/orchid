@@ -70,12 +70,14 @@ defmodule Orchid.Planner do
       |> Keyword.put(:path_index, path_index)
       |> Keyword.put(:path_count, path_count)
 
+    completed_tasks = Keyword.get(plan_opts, :completed_tasks, [])
+
     overlay = Overlay.branch(base_sandbox)
 
     try do
       verifier_opts = Keyword.put(plan_opts, :overlay, overlay)
 
-      with {:ok, tasks} <- Generator.generate(objective, [], plan_opts) do
+      with {:ok, tasks} <- Generator.generate(objective, completed_tasks, plan_opts) do
         case Verifier.verify(objective, tasks, verifier_opts) do
           {:approved, reason} -> {:approved, tasks, reason}
           {:flawed, critique} -> {:flawed, tasks, critique}

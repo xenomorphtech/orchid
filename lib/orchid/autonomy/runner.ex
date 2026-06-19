@@ -11,7 +11,7 @@ defmodule Orchid.Autonomy.Runner do
   """
 
   alias Orchid.Autonomy.{Benchmark, Runtime, Scorer}
-  alias Orchid.{Agent, Goals, Object, Project, Projects, Sandbox}
+  alias Orchid.{Agent, Goals, Object, Planner, Project, Projects, Sandbox, Tool}
 
   @type step :: %{
           optional(:index) => non_neg_integer(),
@@ -44,6 +44,7 @@ defmodule Orchid.Autonomy.Runner do
           required(:steps) => [step()],
           optional(:agent_id) => String.t(),
           optional(:goal_id) => String.t(),
+          optional(:runner_mode) => :flat | :gvr,
           optional(:status) => atom(),
           optional(:turn_result) => :ok | :error | :timeout,
           optional(:last_assistant_message) => String.t() | nil,
@@ -52,13 +53,19 @@ defmodule Orchid.Autonomy.Runner do
 
   @type option ::
           {:project_id, String.t()}
+          | {:mode, :flat | :gvr | String.t()}
           | {:agent_config, map()}
           | {:max_steps, pos_integer()}
           | {:wall_clock_timeout_ms, pos_integer()}
           | {:success_timeout_ms, pos_integer()}
+          | {:gvr_num_paths, pos_integer()}
+          | {:gvr_max_rounds, pos_integer()}
+          | {:gvr_max_delegate_depth, non_neg_integer()}
 
   @default_wall_clock_timeout_ms 360_000
   @default_success_timeout_ms 120_000
+  @default_gvr_max_rounds 6
+  @default_gvr_max_delegate_depth 3
   @agent_tools ~w(shell read edit list grep task_report_result)
 
   @doc """
@@ -67,25 +74,18 @@ defmodule Orchid.Autonomy.Runner do
   @spec run(Benchmark.t(), [option()]) :: {:ok, run_result()} | {:error, term()}
   def run(%Benchmark{} = benchmark, opts \\ []) when is_list(opts) do
     max_steps = Keyword.get(opts, :max_steps, benchmark.max_steps)
+    mode = runner_mode(opts)
 
     with :ok <- validate_max_steps(max_steps),
+         {:ok, mode} <- validate_mode(mode),
          :ok <- Runtime.ensure_started(),
          {:ok, project} <- ensure_project(benchmark, opts),
          :ok <- seed_project_files(benchmark, project.id),
          :ok <- ensure_sandbox(project.id),
          initial_recovery <- detect_initial_recovery(benchmark, project.id, opts),
-         {:ok, agent_id} <- Agent.create(agent_config(benchmark, project.id, opts)),
          {:ok, goal} <- create_goal(benchmark, project.id),
          {:ok, result} <-
-           run_assigned_goal(
-             benchmark,
-             project.id,
-             goal,
-             agent_id,
-             max_steps,
-             initial_recovery,
-             opts
-           ) do
+           run_goal(mode, benchmark, project.id, goal, max_steps, initial_recovery, opts) do
       {:ok, result}
     end
   end
@@ -103,6 +103,21 @@ defmodule Orchid.Autonomy.Runner do
 
   defp validate_max_steps(max_steps) when is_integer(max_steps) and max_steps > 0, do: :ok
   defp validate_max_steps(max_steps), do: {:error, {:invalid_max_steps, max_steps}}
+
+  defp validate_mode(mode) when mode in [:flat, :gvr], do: {:ok, mode}
+  defp validate_mode(mode), do: {:error, {:invalid_runner_mode, mode}}
+
+  defp runner_mode(opts) do
+    opts
+    |> Keyword.get(:mode, :flat)
+    |> normalize_mode()
+  end
+
+  defp normalize_mode(:flat), do: :flat
+  defp normalize_mode(:gvr), do: :gvr
+  defp normalize_mode("flat"), do: :flat
+  defp normalize_mode("gvr"), do: :gvr
+  defp normalize_mode(other), do: other
 
   defp ensure_project(%Benchmark{} = benchmark, opts) do
     case Keyword.get(opts, :project_id) do
@@ -229,6 +244,26 @@ defmodule Orchid.Autonomy.Runner do
     end)
   end
 
+  defp run_goal(:flat, benchmark, project_id, goal, max_steps, initial_recovery, opts) do
+    with {:ok, agent_id} <- Agent.create(agent_config(benchmark, project_id, opts)),
+         {:ok, result} <-
+           run_assigned_goal(
+             benchmark,
+             project_id,
+             goal,
+             agent_id,
+             max_steps,
+             initial_recovery,
+             opts
+           ) do
+      {:ok, Map.put(result, :runner_mode, :flat)}
+    end
+  end
+
+  defp run_goal(:gvr, benchmark, project_id, goal, max_steps, initial_recovery, opts) do
+    run_gvr_goal(benchmark, project_id, goal, max_steps, initial_recovery, opts)
+  end
+
   defp run_assigned_goal(
          benchmark,
          project_id,
@@ -288,6 +323,405 @@ defmodule Orchid.Autonomy.Runner do
       {:exit, reason} -> {:error, {:agent_task_exit, reason}}
       nil -> {:error, :timeout}
     end
+  end
+
+  defp run_gvr_goal(benchmark, project_id, goal, max_steps, initial_recovery, opts) do
+    started_at = monotonic_ms()
+    gvr_id = "gvr-" <> goal.id
+
+    with :ok <- assign_goal(goal.id, gvr_id) do
+      state = gvr_agent_state(gvr_id, project_id)
+      context = gvr_context(benchmark)
+      rounds = Keyword.get(opts, :gvr_max_rounds, @default_gvr_max_rounds)
+
+      {turn_result, final_state} =
+        run_gvr_loop(
+          benchmark,
+          project_id,
+          state,
+          context,
+          max_steps,
+          rounds,
+          0,
+          opts
+        )
+
+      result =
+        build_result(
+          benchmark,
+          project_id,
+          goal.id,
+          gvr_id,
+          final_state,
+          turn_result,
+          max_steps,
+          initial_recovery,
+          opts,
+          started_at
+        )
+        |> Map.put(:runner_mode, :gvr)
+
+      finalize_goal(goal.id, result)
+      {:ok, result}
+    end
+  end
+
+  defp gvr_agent_state(gvr_id, project_id) do
+    %{
+      id: gvr_id,
+      project_id: project_id,
+      sandbox: Sandbox.status(project_id),
+      config: %{allowed_tools: @agent_tools},
+      messages: [],
+      tool_history: [],
+      memory: %{}
+    }
+  end
+
+  defp gvr_context(benchmark) do
+    %{
+      objective: goal_description(benchmark),
+      completed_tasks: [],
+      failures: []
+    }
+  end
+
+  defp run_gvr_loop(
+         benchmark,
+         project_id,
+         state,
+         context,
+         max_steps,
+         rounds_left,
+         delegate_depth,
+         opts
+       ) do
+    cond do
+      Scorer.success_check_passed?(benchmark.success_check, %{project_id: project_id}, opts) ->
+        {{:ok, "G-V-R success check passed."},
+         add_gvr_message(state, "G-V-R success check passed.")}
+
+      gvr_depth(state) >= max_steps ->
+        {{:ok, "G-V-R reached max_steps."}, add_gvr_message(state, "G-V-R reached max_steps.")}
+
+      rounds_left <= 0 ->
+        {{:ok, "G-V-R planner rounds exhausted."},
+         add_gvr_message(state, "G-V-R planner rounds exhausted before closure.")}
+
+      true ->
+        objective = gvr_planning_objective(context)
+        planner_opts = gvr_planner_opts(project_id, context, opts)
+
+        case Planner.plan_tasks(objective, Sandbox.status(project_id), planner_opts) do
+          {:ok, tasks} ->
+            case execute_gvr_tasks(
+                   tasks,
+                   benchmark,
+                   project_id,
+                   state,
+                   context,
+                   max_steps,
+                   rounds_left,
+                   delegate_depth,
+                   opts
+                 ) do
+              {:closed, next_state, next_context} ->
+                run_gvr_loop(
+                  benchmark,
+                  project_id,
+                  next_state,
+                  next_context,
+                  max_steps,
+                  rounds_left - 1,
+                  delegate_depth,
+                  opts
+                )
+
+              {:continue, next_state, next_context} ->
+                run_gvr_loop(
+                  benchmark,
+                  project_id,
+                  next_state,
+                  next_context,
+                  max_steps,
+                  rounds_left - 1,
+                  delegate_depth,
+                  opts
+                )
+
+              {:failed, next_state, next_context} ->
+                run_gvr_loop(
+                  benchmark,
+                  project_id,
+                  next_state,
+                  next_context,
+                  max_steps,
+                  rounds_left - 1,
+                  delegate_depth,
+                  opts
+                )
+            end
+
+          {:error, reason} ->
+            {{:error, {:gvr_planner_failed, reason}},
+             add_gvr_message(state, "G-V-R planner failed: #{reason}")}
+        end
+    end
+  end
+
+  defp execute_gvr_tasks(
+         tasks,
+         benchmark,
+         project_id,
+         state,
+         context,
+         max_steps,
+         rounds_left,
+         delegate_depth,
+         opts
+       ) do
+    Enum.reduce_while(tasks, {:continue, state, context}, fn task,
+                                                             {_status, acc_state, acc_context} ->
+      cond do
+        Scorer.success_check_passed?(benchmark.success_check, %{project_id: project_id}, opts) ->
+          {:halt, {:closed, acc_state, acc_context}}
+
+        gvr_depth(acc_state) >= max_steps ->
+          {:halt, {:continue, acc_state, add_gvr_failure(acc_context, task, "max_steps reached")}}
+
+        true ->
+          case execute_gvr_task(
+                 task,
+                 benchmark,
+                 project_id,
+                 acc_state,
+                 acc_context,
+                 max_steps,
+                 rounds_left,
+                 delegate_depth,
+                 opts
+               ) do
+            {:ok, next_state, next_context} -> {:cont, {:continue, next_state, next_context}}
+            {:closed, next_state, next_context} -> {:halt, {:closed, next_state, next_context}}
+            {:error, next_state, next_context} -> {:halt, {:failed, next_state, next_context}}
+          end
+      end
+    end)
+  end
+
+  defp execute_gvr_task(
+         %{type: :delegate} = task,
+         benchmark,
+         project_id,
+         state,
+         context,
+         max_steps,
+         rounds_left,
+         delegate_depth,
+         opts
+       ) do
+    max_delegate_depth =
+      Keyword.get(opts, :gvr_max_delegate_depth, @default_gvr_max_delegate_depth)
+
+    if delegate_depth >= max_delegate_depth do
+      {:error, state, add_gvr_failure(context, task, "delegate depth limit reached")}
+    else
+      delegate_context = %{
+        context
+        | objective: gvr_delegate_objective(task, context),
+          failures: context.failures
+      }
+
+      {turn_result, next_state} =
+        run_gvr_loop(
+          benchmark,
+          project_id,
+          state,
+          delegate_context,
+          max_steps,
+          max(1, rounds_left - 1),
+          delegate_depth + 1,
+          opts
+        )
+
+      next_context =
+        case turn_result do
+          {:error, reason} -> add_gvr_failure(context, task, inspect(reason))
+          _ -> add_gvr_completed(context, task, "delegate completed")
+        end
+
+      if Scorer.success_check_passed?(benchmark.success_check, %{project_id: project_id}, opts) do
+        {:closed, next_state, next_context}
+      else
+        {:ok, next_state, next_context}
+      end
+    end
+  end
+
+  defp execute_gvr_task(
+         %{type: :tool} = task,
+         benchmark,
+         project_id,
+         state,
+         context,
+         _max_steps,
+         _rounds_left,
+         _delegate_depth,
+         opts
+       ) do
+    result =
+      try do
+        Tool.execute(task.tool, task.args || %{}, %{agent_state: state})
+      rescue
+        error ->
+          {:error, "Tool #{task.tool} crashed: #{Exception.message(error)}"}
+      end
+
+    next_state = record_gvr_tool(state, task, result)
+
+    case result do
+      {:ok, summary} ->
+        next_context = add_gvr_completed(context, task, summary)
+
+        if Scorer.success_check_passed?(benchmark.success_check, %{project_id: project_id}, opts) do
+          {:closed, next_state, next_context}
+        else
+          {:ok, next_state, next_context}
+        end
+
+      {:error, reason} ->
+        {:error, next_state, add_gvr_failure(context, task, inspect(reason))}
+    end
+  end
+
+  defp execute_gvr_task(
+         task,
+         _benchmark,
+         _project_id,
+         state,
+         context,
+         _max_steps,
+         _rounds_left,
+         _delegate_depth,
+         _opts
+       ) do
+    {:error, state, add_gvr_failure(context, task, "invalid G-V-R task")}
+  end
+
+  defp gvr_planner_opts(project_id, context, opts) do
+    [
+      num_paths: Keyword.get(opts, :gvr_num_paths, 1),
+      max_iterations: 1,
+      max_concurrency: Keyword.get(opts, :gvr_num_paths, 1),
+      project_id: project_id,
+      completed_tasks: context.completed_tasks,
+      allowed_tools: @agent_tools,
+      workspace_context: gvr_workspace_context(project_id),
+      llm_config: gvr_llm_config(opts)
+    ]
+  end
+
+  defp gvr_llm_config(opts) do
+    %{provider: :openrouter, model: :nex_n2_pro}
+    |> maybe_put_openrouter_api_key()
+    |> Map.merge(Keyword.get(opts, :gvr_llm_config, %{}))
+  end
+
+  defp gvr_planning_objective(context) do
+    """
+    #{context.objective}
+
+    Completed G-V-R tasks:
+    #{inspect(context.completed_tasks, limit: 40)}
+
+    Explicit failures to avoid:
+    #{inspect(context.failures, limit: 20)}
+    """
+    |> String.trim()
+  end
+
+  defp gvr_delegate_objective(task, context) do
+    """
+    Delegated subtask:
+    #{task.objective}
+
+    Original/root objective:
+    #{context.objective}
+
+    Completed parent tasks:
+    #{inspect(context.completed_tasks, limit: 40)}
+
+    Known failures:
+    #{inspect(context.failures, limit: 20)}
+    """
+    |> String.trim()
+  end
+
+  defp gvr_workspace_context(project_id) do
+    root = Project.files_path(project_id)
+
+    files =
+      if File.dir?(root) do
+        root
+        |> Path.join("**/*")
+        |> Path.wildcard(match_dot: true)
+        |> Enum.filter(&File.regular?/1)
+        |> Enum.take(80)
+        |> Enum.map(&Path.relative_to(&1, root))
+      else
+        []
+      end
+
+    if files == [] do
+      "(workspace appears empty)"
+    else
+      Enum.join(files, "\n")
+    end
+  end
+
+  defp record_gvr_tool(state, task, result) do
+    tool_record = %{
+      id: Map.get(task, :id),
+      tool: Map.get(task, :tool),
+      args: Map.get(task, :args, %{}),
+      result: result,
+      timestamp: DateTime.utc_now()
+    }
+
+    %{state | tool_history: state.tool_history ++ [tool_record]}
+  end
+
+  defp add_gvr_completed(context, task, summary) do
+    completed = %{
+      id: Map.get(task, :id),
+      type: Map.get(task, :type),
+      objective: Map.get(task, :objective),
+      result: truncate(to_string(summary), 500)
+    }
+
+    %{context | completed_tasks: context.completed_tasks ++ [completed]}
+  end
+
+  defp add_gvr_failure(context, task, reason) do
+    failure = %{
+      id: Map.get(task, :id),
+      type: Map.get(task, :type),
+      objective: Map.get(task, :objective),
+      reason: truncate(to_string(reason), 500)
+    }
+
+    %{context | failures: context.failures ++ [failure]}
+  end
+
+  defp add_gvr_message(state, content) do
+    message = %{role: :assistant, content: content, timestamp: DateTime.utc_now()}
+    %{state | messages: state.messages ++ [message]}
+  end
+
+  defp gvr_depth(state) do
+    state
+    |> tool_history()
+    |> Enum.count(fn record -> tool_status(Map.get(record, :result)) == :ok end)
   end
 
   defp fetch_agent_state(agent_id) do
