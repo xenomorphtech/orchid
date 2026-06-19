@@ -79,14 +79,21 @@ defmodule Orchid.Autonomy.Runner do
     with :ok <- validate_max_steps(max_steps),
          {:ok, mode} <- validate_mode(mode),
          :ok <- Runtime.ensure_started(),
-         {:ok, project} <- ensure_project(benchmark, opts),
-         :ok <- seed_project_files(benchmark, project.id),
-         :ok <- ensure_sandbox(project.id),
-         initial_recovery <- detect_initial_recovery(benchmark, project.id, opts),
-         {:ok, goal} <- create_goal(benchmark, project.id),
-         {:ok, result} <-
-           run_goal(mode, benchmark, project.id, goal, max_steps, initial_recovery, opts) do
-      {:ok, result}
+         {:ok, project} <- ensure_project(benchmark, opts) do
+      project_id = project.id
+
+      try do
+        with :ok <- seed_project_files(benchmark, project_id),
+             :ok <- ensure_sandbox(project_id),
+             initial_recovery <- detect_initial_recovery(benchmark, project_id, opts),
+             {:ok, goal} <- create_goal(benchmark, project_id),
+             {:ok, result} <-
+               run_goal(mode, benchmark, project_id, goal, max_steps, initial_recovery, opts) do
+          {:ok, result}
+        end
+      after
+        cleanup(%{project_id: project_id})
+      end
     end
   end
 
