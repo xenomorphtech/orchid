@@ -79,8 +79,17 @@ The spec above is **implemented and the campaign thesis is proven**. State of th
 ### Production wiring (`lib/orchid/goal_watcher.ex` + `lib/orchid/planner/runtime_goal.ex`)
 - The **real** goal-pursuit loop now routes through the proven stack: `goal_watcher.spawn_planner` builds a `RuntimeGoal` from the live `Orchid.Object` project/goals → `Router` (`[ROUTER] -> :flat|:gvr`) → `:flat` planner-agent path OR `:gvr` `Planner.plan/3` → approved task array to a real planner agent. Runtime-signals-only; no benchmark coupling. (Previously goal_watcher used a freeform LLM agent that bypassed the entire planner stack.)
 
+### End-to-end closure validated (smokes under `priv/smoke/`, all via `mix run --no-start`)
+The full plan→execute→success_check chain is empirically validated end-to-end on the free model, with **zero AI in the scoring loop** (deterministic `success_check`):
+- **`:flat` benchmark closure** (`closure_smoke.exs`, main `961cb68`): one easy `%Benchmark{}` → `Runner.run/2` (`:flat`) → real model (2 calls) → in-run check PASSED → `GOAL_CLOSURE=true`. This was the **first real bounded autonomous goal closure**.
+- **Scorer ordering fix** (`scorer.ex`, main `55629d3`): the closure smoke surfaced that `Runner.run/2`'s `try…after cleanup` destroyed the sandbox before a caller-side `Scorer.score/2` re-exec → false-negative. Fixed: `Scorer.score/2` reads the runner-captured `:closed` result (teardown preserved, no leak).
+- **`:gvr` benchmark plan→execute** (`gvr_closure_smoke.exs`, main `b94b18a`): `garden_path_diagnosis` → `Runner.run/2` (`:gvr`, rounds 1/depth 1) → G-V-R produced an APPROVED plan (7 calls) AND the runner EXECUTED it. `GOAL_CLOSURE=false` here only because the free model emitted a buggy shell command (`printf: Illegal option`) — a **model-quality limiter, NOT an orchid-mechanism gap**.
+- **⭐ PRODUCT-path end-to-end closure** (`product_closure_smoke.exs`, main `9dc4ce0`): the SHIPPED loop `GoalWatcher → RuntimeGoal → Router → real planner agent → worker agent → task_report_result → success_check` closed a real goal — `GOAL_CLOSURE=true`, 12 model calls, **full boot NOT required**. The headline capability on the actual product path.
+
 ### Open / gated
-- **Empirical real-goal closure measurement** is the remaining frontier. It is gated by (a) the free model's ~95s/call latency (a paid/faster planner model collapses a suite/closure run from multi-hour to minutes) and (b) full app boot requiring SSL certs absent in this environment (`mix run --no-start` only). Both are external resource gates; the durable engineering above is complete and folded to `main`.
+- The remaining frontier is **the at-scale goal_closure_RATE** (median of N≥3 runs across the discriminator suite). It is gated by ONE external resource: the free model's ~95s/call latency × ~12 calls/goal makes a full multi-goal suite multi-hour; a paid/faster planner model collapses it to minutes. (A secondary free-model limiter — buggy shell commands like the `printf` above — also resolves with a better model.)
+- ⚠️ CORRECTED: an earlier draft claimed closure was additionally gated by "full app boot requiring SSL certs (`mix run --no-start` only)." That is **REFUTED** — the product-path closure above ran end-to-end under `mix run --no-start` with **no full boot**. Full boot is NOT a closure gate.
+- All durable engineering (router + G-V-R + retries + memoization + scorer fix + product wiring) and end-to-end validation are complete and folded to `main`.
 
 ---
 _This spec is the contract the autonomy test suite and the optimizing loops build against. Implementation lands under `test/autonomy/` + `lib/orchid/autonomy/` + `lib/orchid/planner/` + `mix orchid.autonomy`._
