@@ -11,8 +11,40 @@ defmodule Orchid.ProductPathSmoke do
     max_tokens: 1_200
   }
 
+  defmodule CountingLLM do
+    def reset! do
+      ensure_started!()
+      Agent.update(__MODULE__, fn _count -> 0 end)
+    end
+
+    def count do
+      ensure_started!()
+      Agent.get(__MODULE__, & &1)
+    end
+
+    def chat(config, context) do
+      ensure_started!()
+      Agent.update(__MODULE__, &(&1 + 1))
+      Orchid.LLM.chat(config, context)
+    end
+
+    defp ensure_started! do
+      case Process.whereis(__MODULE__) do
+        nil ->
+          case Agent.start_link(fn -> 0 end, name: __MODULE__) do
+            {:ok, _pid} -> :ok
+            {:error, {:already_started, _pid}} -> :ok
+          end
+
+        _pid ->
+          :ok
+      end
+    end
+  end
+
   def run do
     Logger.configure(level: :info)
+    mode = smoke_mode!()
 
     data_dir =
       Path.join(
@@ -28,31 +60,67 @@ defmodule Orchid.ProductPathSmoke do
     try do
       seed_facts!()
 
-      {project, goal} = smoke_objects()
-      runtime_goal = RuntimeGoal.from_goal_watcher(project, [goal])
-      request = Orchid.GoalWatcher.runtime_planner_request(project, [goal])
-
-      unless request.route_input == runtime_goal do
-        raise "GoalWatcher runtime route_input diverged from RuntimeGoal.from_goal_watcher/2"
-      end
-
-      IO.puts("ORCHID_PRODUCT_PATH_SMOKE")
-      IO.puts("ROUTE_INPUT_JSON=#{Jason.encode!(request.route_input)}")
-
-      decision = Router.route(request.route_input, request.goal_label)
-      IO.puts("[ROUTER] -> #{inspect(decision.mode)} signal=#{decision.signal}")
-      IO.puts("MODEL=openrouter/#{Orchid.LLM.Catalog.resolve_model(:nex_n2_pro, :openrouter)}")
-
-      case decision.mode do
-        :flat ->
-          run_flat_planner!(request)
-
-        :gvr ->
-          run_gvr_planner!(request)
+      for {expected_mode, {project, goal}} <- smoke_cases(mode) do
+        run_smoke_case!(expected_mode, project, [goal])
       end
     after
       Supervisor.stop(supervisor)
       File.rm_rf(data_dir)
+    end
+  end
+
+  defp smoke_mode! do
+    case System.argv() do
+      [] ->
+        :flat
+
+      ["flat"] ->
+        :flat
+
+      ["gvr"] ->
+        :gvr
+
+      ["all"] ->
+        :all
+
+      ["both"] ->
+        :all
+
+      args ->
+        raise "usage: mix run --no-start priv/smoke/product_path_smoke.exs [flat|gvr|all], got: #{inspect(args)}"
+    end
+  end
+
+  defp smoke_cases(:flat), do: [{:flat, flat_smoke_objects()}]
+  defp smoke_cases(:gvr), do: [{:gvr, gvr_smoke_objects()}]
+  defp smoke_cases(:all), do: [{:flat, flat_smoke_objects()}, {:gvr, gvr_smoke_objects()}]
+
+  defp run_smoke_case!(expected_mode, project, goals) do
+    runtime_goal = RuntimeGoal.from_goal_watcher(project, goals)
+    request = Orchid.GoalWatcher.runtime_planner_request(project, goals)
+
+    unless request.route_input == runtime_goal do
+      raise "GoalWatcher runtime route_input diverged from RuntimeGoal.from_goal_watcher/2"
+    end
+
+    IO.puts("ORCHID_PRODUCT_PATH_SMOKE")
+    IO.puts("SMOKE_CASE=#{expected_mode}")
+    IO.puts("ROUTE_INPUT_JSON=#{Jason.encode!(request.route_input)}")
+
+    decision = Router.route(request.route_input, request.goal_label)
+    IO.puts("[ROUTER] -> #{inspect(decision.mode)} signal=#{decision.signal}")
+    IO.puts("MODEL=openrouter/#{Orchid.LLM.Catalog.resolve_model(:nex_n2_pro, :openrouter)}")
+
+    unless decision.mode == expected_mode do
+      raise "expected #{inspect(expected_mode)} route, got #{inspect(decision.mode)}"
+    end
+
+    case decision.mode do
+      :flat ->
+        run_flat_planner!(request)
+
+      :gvr ->
+        run_gvr_planner!(request)
     end
   end
 
@@ -117,7 +185,7 @@ defmodule Orchid.ProductPathSmoke do
     end
   end
 
-  defp smoke_objects do
+  defp flat_smoke_objects do
     now = DateTime.utc_now()
 
     project = %Object{
@@ -143,6 +211,50 @@ defmodule Orchid.ProductPathSmoke do
         project_id: project.id,
         status: :pending,
         depends_on: []
+      },
+      created_at: now,
+      updated_at: now
+    }
+
+    {project, goal}
+  end
+
+  defp gvr_smoke_objects do
+    now = DateTime.utc_now()
+
+    objective =
+      "Refactor the runtime settings module, then update dependent callers in dependency order while preserving the existing public contract."
+
+    project = %Object{
+      id: "product-planning-smoke-project",
+      type: :project,
+      name: "Product Planning Smoke",
+      content:
+        "Bounded product-path smoke fixture. Route using runtime planning markers, not benchmark ids.",
+      metadata: %{
+        status: :active,
+        objective: objective,
+        success_criteria:
+          "Run the existing contract checks after the ordered dependency updates and confirm behavior is preserved.",
+        constraints:
+          "Respect the sequencing constraints: inspect the module boundary first, refactor second, update dependents after that, and keep unrelated code untouched.",
+        max_steps: 24
+      },
+      created_at: now,
+      updated_at: now
+    }
+
+    goal = %Object{
+      id: "product-planning-smoke-goal",
+      type: :goal,
+      name: "Plan ordered refactor",
+      content:
+        "Plan the refactor, then the dependent caller updates, and finally the verification step in order; preserve the contract throughout.",
+      metadata: %{
+        project_id: project.id,
+        status: :pending,
+        depends_on: [],
+        max_steps: 24
       },
       created_at: now,
       updated_at: now
@@ -187,23 +299,35 @@ defmodule Orchid.ProductPathSmoke do
   defp run_gvr_planner!(request) do
     IO.puts("RESOLVED_ENTRY=Orchid.Planner.plan/3")
 
-    opts = [
+    CountingLLM.reset!()
+
+    opts = bounded_gvr_planner_opts()
+    IO.puts("GVR_BOUNDS=num_paths=1 max_iterations=1 max_concurrency=1 output_retries=3")
+
+    case Orchid.Planner.plan(request.planner_objective, nil, opts) do
+      {:ok, plan} ->
+        IO.puts("MODEL_CALLS_OBSERVED=#{CountingLLM.count()}")
+        print_plan(plan)
+
+      {:error, reason} ->
+        IO.puts("MODEL_CALLS_OBSERVED=#{CountingLLM.count()}")
+        raise "gvr planner failed: #{inspect(reason)}"
+    end
+  end
+
+  defp bounded_gvr_planner_opts do
+    [
       num_paths: 1,
       max_iterations: 1,
       max_concurrency: 1,
       llm_memoize: false,
-      workspace_context: "(smoke test empty workspace)",
-      llm_config: @model_config
+      generator_output_retry_attempts: 3,
+      verifier_output_retry_attempts: 3,
+      allowed_tools: ~w(goal_list read grep edit shell task_report_result),
+      workspace_context: "(bounded product-path smoke fixture; no full Phoenix or sandbox boot)",
+      llm_config: @model_config,
+      llm_module: CountingLLM
     ]
-
-    case Orchid.Planner.plan(request.planner_objective, nil, opts) do
-      {:ok, plan} ->
-        IO.puts("MODEL_CALLS_OBSERVED=2")
-        print_plan(plan)
-
-      {:error, reason} ->
-        raise "gvr planner failed: #{inspect(reason)}"
-    end
   end
 
   defp flat_smoke_system_prompt do
