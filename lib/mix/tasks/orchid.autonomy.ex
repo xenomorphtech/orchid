@@ -20,7 +20,9 @@ defmodule Mix.Tasks.Orchid.Autonomy do
           mode: :string,
           max_rounds: :integer,
           max_delegate_depth: :integer,
-          gvr_memoize: :boolean
+          gvr_memoize: :boolean,
+          only: :string,
+          out: :string
         ]
       )
 
@@ -30,14 +32,17 @@ defmodule Mix.Tasks.Orchid.Autonomy do
     validate_runs!(runs)
     mode = opts |> Keyword.get(:mode, "auto") |> parse_mode!()
     runner_opts = build_runner_opts(opts)
+    only_ids = opts |> Keyword.get(:only) |> parse_only_ids!()
+    output_path = opts |> Keyword.get(:out, @report_path) |> validate_output_path!()
 
     benchmarks = load_benchmarks()
+    benchmarks = filter_benchmarks!(benchmarks, only_ids)
     report = build_report(benchmarks, runs, mode, runner_opts)
 
-    write_report!(report)
+    write_report!(report, output_path)
 
     Mix.shell().info(
-      "orchid.autonomy: loaded #{length(benchmarks)} benchmark(s), #{runs} #{mode} run(s) each; wrote #{@report_path}"
+      "orchid.autonomy: loaded #{length(benchmarks)} benchmark(s), #{runs} #{mode} run(s) each; wrote #{output_path}"
     )
   end
 
@@ -64,6 +69,51 @@ defmodule Mix.Tasks.Orchid.Autonomy do
     |> Path.wildcard()
     |> Enum.sort()
     |> Enum.map(&load_benchmark!/1)
+  end
+
+  defp parse_only_ids!(nil), do: nil
+
+  defp parse_only_ids!(csv) when is_binary(csv) do
+    ids =
+      csv
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    if ids == [] do
+      Mix.raise("--only must include at least one benchmark id")
+    end
+
+    ids
+  end
+
+  defp validate_output_path!(path) when is_binary(path) do
+    if String.trim(path) == "" do
+      Mix.raise("--out must be a non-empty path")
+    end
+
+    path
+  end
+
+  defp filter_benchmarks!(benchmarks, nil), do: benchmarks
+
+  defp filter_benchmarks!(benchmarks, ids) do
+    loaded_ids = benchmarks |> Enum.map(& &1.id) |> MapSet.new()
+
+    missing_ids =
+      ids
+      |> Enum.reject(&MapSet.member?(loaded_ids, &1))
+      |> Enum.uniq()
+
+    if missing_ids != [] do
+      Mix.raise(
+        "Unknown benchmark id(s) in --only: #{Enum.join(missing_ids, ", ")}. " <>
+          "Available benchmark id(s): #{benchmarks |> Enum.map(& &1.id) |> Enum.sort() |> Enum.join(", ")}"
+      )
+    end
+
+    selected_ids = MapSet.new(ids)
+    Enum.filter(benchmarks, &MapSet.member?(selected_ids, &1.id))
   end
 
   defp reject_invalid_options!([]), do: :ok
@@ -311,11 +361,11 @@ defmodule Mix.Tasks.Orchid.Autonomy do
     Enum.sum(values) / length(values)
   end
 
-  defp write_report!(report) do
-    @report_path
+  defp write_report!(report, output_path) do
+    output_path
     |> Path.dirname()
     |> File.mkdir_p!()
 
-    File.write!(@report_path, Jason.encode!(report, pretty: true))
+    File.write!(output_path, Jason.encode!(report, pretty: true))
   end
 end
