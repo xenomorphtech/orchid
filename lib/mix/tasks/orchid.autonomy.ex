@@ -15,7 +15,12 @@ defmodule Mix.Tasks.Orchid.Autonomy do
   def run(args) do
     {opts, _argv, invalid} =
       OptionParser.parse(args,
-        strict: [runs: :integer, mode: :string, max_rounds: :integer, max_delegate_depth: :integer]
+        strict: [
+          runs: :integer,
+          mode: :string,
+          max_rounds: :integer,
+          max_delegate_depth: :integer
+        ]
       )
 
     reject_invalid_options!(invalid)
@@ -74,9 +79,10 @@ defmodule Mix.Tasks.Orchid.Autonomy do
 
   defp parse_mode!("flat"), do: :flat
   defp parse_mode!("gvr"), do: :gvr
+  defp parse_mode!("auto"), do: :auto
 
   defp parse_mode!(mode) do
-    Mix.raise("--mode must be flat or gvr, got: #{inspect(mode)}")
+    Mix.raise("--mode must be flat, gvr, or auto, got: #{inspect(mode)}")
   end
 
   defp load_benchmark!(path) do
@@ -115,10 +121,11 @@ defmodule Mix.Tasks.Orchid.Autonomy do
           {:ok, result} ->
             try do
               score = Scorer.score(result)
+              runner_mode = Map.get(result, :runner_mode, mode)
 
               %{
                 run: run_index,
-                runner_mode: mode,
+                runner_mode: runner_mode,
                 status: Map.get(result, :status, :unknown),
                 result: encode_run_result(result),
                 score: score

@@ -53,7 +53,7 @@ defmodule Orchid.Autonomy.Runner do
 
   @type option ::
           {:project_id, String.t()}
-          | {:mode, :flat | :gvr | String.t()}
+          | {:mode, :flat | :gvr | :auto | String.t()}
           | {:agent_config, map()}
           | {:max_steps, pos_integer()}
           | {:wall_clock_timeout_ms, pos_integer()}
@@ -111,7 +111,7 @@ defmodule Orchid.Autonomy.Runner do
   defp validate_max_steps(max_steps) when is_integer(max_steps) and max_steps > 0, do: :ok
   defp validate_max_steps(max_steps), do: {:error, {:invalid_max_steps, max_steps}}
 
-  defp validate_mode(mode) when mode in [:flat, :gvr], do: {:ok, mode}
+  defp validate_mode(mode) when mode in [:flat, :gvr, :auto], do: {:ok, mode}
   defp validate_mode(mode), do: {:error, {:invalid_runner_mode, mode}}
 
   defp runner_mode(opts) do
@@ -122,8 +122,10 @@ defmodule Orchid.Autonomy.Runner do
 
   defp normalize_mode(:flat), do: :flat
   defp normalize_mode(:gvr), do: :gvr
+  defp normalize_mode(:auto), do: :auto
   defp normalize_mode("flat"), do: :flat
   defp normalize_mode("gvr"), do: :gvr
+  defp normalize_mode("auto"), do: :auto
   defp normalize_mode(other), do: other
 
   defp ensure_project(%Benchmark{} = benchmark, opts) do
@@ -269,6 +271,11 @@ defmodule Orchid.Autonomy.Runner do
 
   defp run_goal(:gvr, benchmark, project_id, goal, max_steps, initial_recovery, opts) do
     run_gvr_goal(benchmark, project_id, goal, max_steps, initial_recovery, opts)
+  end
+
+  defp run_goal(:auto, benchmark, project_id, goal, max_steps, initial_recovery, opts) do
+    %{mode: mode} = Planner.Router.route(benchmark, goal.id)
+    run_goal(mode, benchmark, project_id, goal, max_steps, initial_recovery, opts)
   end
 
   defp run_assigned_goal(
