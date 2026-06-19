@@ -20,6 +20,7 @@ defmodule Orchid.GoalWatcher do
     max_tokens: 500,
     disable_tools: true
   }
+  @default_output_retry_attempts 6
 
   def start_link(_opts) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
@@ -239,6 +240,27 @@ defmodule Orchid.GoalWatcher do
     plan_routed_request(project, request, decision, opts)
   end
 
+  @doc false
+  def run_flat_planner_message(config, message, opts \\ [])
+      when is_map(config) and is_binary(message) and is_list(opts) do
+    agent_module = Keyword.get(opts, :agent_module, Orchid.Agent)
+    label = Keyword.get(opts, :label, "kickoff")
+    on_agent_created = Keyword.get(opts, :on_agent_created, fn _agent_id -> :ok end)
+    response_validator = Keyword.get(opts, :response_validator, &usable_planner_response/1)
+    max_attempts = output_retry_attempts(opts)
+
+    run_flat_planner_message_with_output_retry(
+      agent_module,
+      config,
+      String.trim(message),
+      label,
+      on_agent_created,
+      response_validator,
+      1,
+      max_attempts
+    )
+  end
+
   defp spawn_planner(project, pending_goals) do
     request = runtime_planner_request(project, pending_goals)
     decision = route_runtime_request(request, [])
@@ -258,20 +280,142 @@ defmodule Orchid.GoalWatcher do
         ensure_planner_sandbox(project)
         config = planner_agent_config(planner, project, :flat)
 
-        case Orchid.Agent.create(config) do
-          {:ok, agent_id} ->
-            log("spawned flat planner #{agent_id} for project \"#{project.name}\"")
+        Task.start(fn ->
+          case run_flat_planner_message(config, request.planner_objective,
+                 label: "kickoff",
+                 on_agent_created: fn agent_id ->
+                   log("spawned flat planner #{agent_id} for project \"#{project.name}\"")
+                   assign_unassigned_goals(pending_goals, agent_id)
+                 end
+               ) do
+            {:ok, %{agent_id: agent_id}} ->
+              log("sent kickoff message to #{agent_id}")
 
-            assign_unassigned_goals(pending_goals, agent_id)
-            stream_planner_message(agent_id, request.planner_objective, "kickoff")
-
-            log("sent kickoff message to #{agent_id}")
-
-          {:error, reason} ->
-            log("ERROR: failed to spawn agent for \"#{project.name}\": #{inspect(reason)}")
-        end
+            {:error, reason} ->
+              log(
+                "ERROR: flat planner for \"#{project.name}\" failed to produce output: #{inspect(reason)}"
+              )
+          end
+        end)
     end
   end
+
+  defp run_flat_planner_message_with_output_retry(
+         agent_module,
+         config,
+         message,
+         label,
+         on_agent_created,
+         response_validator,
+         attempt,
+         max_attempts
+       ) do
+    case run_flat_planner_message_once(
+           agent_module,
+           config,
+           message,
+           label,
+           on_agent_created,
+           response_validator
+         ) do
+      {:ok, result} ->
+        {:ok, Map.put(result, :attempts, attempt)}
+
+      {:retry, %{agent_id: agent_id, reason: reason}} when attempt < max_attempts ->
+        log_output_retry(attempt, max_attempts, reason)
+        stop_retry_agent(agent_module, agent_id)
+
+        run_flat_planner_message_with_output_retry(
+          agent_module,
+          config,
+          message,
+          label,
+          on_agent_created,
+          response_validator,
+          attempt + 1,
+          max_attempts
+        )
+
+      {:retry, %{agent_id: agent_id, reason: reason}} ->
+        log_output_retry(attempt, max_attempts, reason)
+        stop_retry_agent(agent_module, agent_id)
+        {:error, reason}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp run_flat_planner_message_once(
+         agent_module,
+         config,
+         message,
+         label,
+         on_agent_created,
+         response_validator
+       ) do
+    case agent_module.create(config) do
+      {:ok, agent_id} ->
+        on_agent_created.(agent_id)
+
+        log("streaming #{label} to planner #{agent_id}...")
+
+        case agent_module.stream(agent_id, message, fn _chunk -> :ok end) do
+          {:ok, response} ->
+            case response_validator.(response) do
+              {:ok, trimmed} ->
+                preview = trimmed |> String.slice(0, 200) |> String.replace("\n", " ")
+                log("planner #{agent_id} responded: #{preview}")
+                {:ok, %{agent_id: agent_id, response: trimmed}}
+
+              {:retry, reason} ->
+                {:retry, %{agent_id: agent_id, reason: reason}}
+            end
+
+          {:error, reason} ->
+            log("ERROR: planner #{agent_id} stream failed: #{inspect(reason)}")
+            {:error, reason}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp usable_planner_response(response) when is_binary(response) do
+    case String.trim(response) do
+      "" -> {:retry, "Planner returned empty output"}
+      trimmed -> {:ok, trimmed}
+    end
+  end
+
+  defp usable_planner_response(response) do
+    {:retry, "Planner returned no decodable output: #{inspect(response)}"}
+  end
+
+  defp log_output_retry(attempt, max_attempts, reason) do
+    log("flat planner output retry #{attempt}/#{max_attempts}: #{truncate(reason, 2_000)}")
+  end
+
+  defp stop_retry_agent(agent_module, agent_id) do
+    case agent_module.stop(agent_id, :empty_output_retry) do
+      :ok -> :ok
+      {:error, _reason} -> :ok
+      _other -> :ok
+    end
+  end
+
+  defp output_retry_attempts(opts) do
+    opts
+    |> Keyword.get(:flat_output_retry_attempts, @default_output_retry_attempts)
+    |> bounded_int(@default_output_retry_attempts, 1, 8)
+  end
+
+  defp bounded_int(value, _default, min, max) when is_integer(value) do
+    value |> max(min) |> min(max)
+  end
+
+  defp bounded_int(_value, default, _min, _max), do: default
 
   defp spawn_gvr_planner(project, pending_goals, request, decision) do
     case find_planner_template() do
@@ -631,6 +775,7 @@ defmodule Orchid.GoalWatcher do
   end
 
   defp log(msg) do
+    File.mkdir_p!(Path.dirname(@log_file))
     ts = DateTime.utc_now() |> DateTime.to_string()
     line = "[#{ts}] GoalWatcher: #{msg}\n"
     File.write!(@log_file, line, [:append])

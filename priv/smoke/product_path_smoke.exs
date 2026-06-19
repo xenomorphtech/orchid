@@ -152,46 +152,36 @@ defmodule Orchid.ProductPathSmoke do
   end
 
   defp run_flat_planner!(request) do
-    IO.puts("RESOLVED_ENTRY=Orchid.Agent.create/1 + Orchid.Agent.stream/3")
+    IO.puts("RESOLVED_ENTRY=Orchid.GoalWatcher.run_flat_planner_message/3")
     prompt = flat_smoke_user_prompt(request.planner_objective)
-    response = run_flat_planner_attempt!(prompt, 1, 3)
 
-    IO.puts("MODEL_CALLS_OBSERVED=#{response.model_calls}")
-    print_plan(response.content)
-  end
-
-  defp run_flat_planner_attempt!(_prompt, attempt, max_attempts) when attempt > max_attempts do
-    raise "flat planner failed: no non-empty JSON task array after #{max_attempts} real model calls"
-  end
-
-  defp run_flat_planner_attempt!(prompt, attempt, max_attempts) do
-    IO.puts("FLAT_ATTEMPT=#{attempt}/#{max_attempts}")
-
-    {:ok, agent_id} =
-      Orchid.Agent.create(%{
-        provider: :openrouter,
-        model: :nex_n2_pro,
-        system_prompt: flat_smoke_system_prompt(),
-        disable_tools: true,
-        max_turns: 1,
-        max_tokens: 1_200
-      })
-
-    case Orchid.Agent.stream(agent_id, prompt, fn _chunk -> :ok end) do
+    case Orchid.GoalWatcher.run_flat_planner_message(
+           flat_planner_config(),
+           prompt,
+           label: "product-path smoke",
+           response_validator: &validate_task_array/1,
+           on_agent_created: fn agent_id ->
+             IO.puts("FLAT_ATTEMPT_AGENT=#{agent_id}")
+           end
+         ) do
       {:ok, response} ->
-        case validate_task_array(response) do
-          :ok ->
-            %{content: response, model_calls: attempt}
-
-          {:error, reason} ->
-            IO.puts("FLAT_ATTEMPT_RESULT=retry reason=#{reason}")
-            run_flat_planner_attempt!(prompt, attempt + 1, max_attempts)
-        end
+        IO.puts("MODEL_CALLS_OBSERVED=#{response.attempts}")
+        print_plan(response.response)
 
       {:error, reason} ->
-        IO.puts("FLAT_ATTEMPT_RESULT=retry reason=#{inspect(reason)}")
-        run_flat_planner_attempt!(prompt, attempt + 1, max_attempts)
+        raise "flat planner failed: #{reason}"
     end
+  end
+
+  defp flat_planner_config do
+    %{
+      provider: :openrouter,
+      model: :nex_n2_pro,
+      system_prompt: flat_smoke_system_prompt(),
+      disable_tools: true,
+      max_turns: 1,
+      max_tokens: 1_200
+    }
   end
 
   defp run_gvr_planner!(request) do
@@ -259,16 +249,23 @@ defmodule Orchid.ProductPathSmoke do
 
     cond do
       trimmed == "" ->
-        {:error, "empty_response"}
+        {:retry, "empty_response"}
 
       true ->
         case Jason.decode(trimmed) do
-          {:ok, decoded} when is_list(decoded) and decoded != [] -> :ok
-          {:ok, _decoded} -> {:error, "json_not_nonempty_array"}
-          {:error, reason} -> {:error, "invalid_json: #{Exception.message(reason)}"}
+          {:ok, decoded} when is_list(decoded) and decoded != [] ->
+            {:ok, trimmed}
+
+          {:ok, _decoded} ->
+            {:retry, "json_not_nonempty_array"}
+
+          {:error, reason} ->
+            {:retry, "invalid_json: #{Exception.message(reason)}"}
         end
     end
   end
+
+  defp validate_task_array(response), do: {:retry, "no_decodable_json: #{inspect(response)}"}
 end
 
 Orchid.ProductPathSmoke.run()
