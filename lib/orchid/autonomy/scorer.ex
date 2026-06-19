@@ -31,8 +31,15 @@ defmodule Orchid.Autonomy.Scorer do
     }
   end
 
-  defp success_check_passed?({:shell, command}, %{project_id: project_id}, opts)
-       when is_binary(project_id) and is_binary(command) do
+  @doc """
+  Execute a benchmark success check without using an LLM.
+  """
+  @spec success_check_passed?(Benchmark.success_check(), Runner.run_result() | map(), [option()]) ::
+          boolean()
+  def success_check_passed?(success_check, run_result, opts \\ [])
+
+  def success_check_passed?({:shell, command}, %{project_id: project_id}, opts)
+      when is_binary(project_id) and is_binary(command) do
     timeout = Keyword.get(opts, :success_timeout_ms, 120_000)
 
     case Sandbox.exec(project_id, command, timeout: timeout) do
@@ -41,36 +48,36 @@ defmodule Orchid.Autonomy.Scorer do
     end
   end
 
-  defp success_check_passed?({:file_exists, path}, run_result, opts) when is_binary(path) do
+  def success_check_passed?({:file_exists, path}, run_result, opts) when is_binary(path) do
     success_check_passed?({:shell, "test -f #{shell_escape(path)}"}, run_result, opts)
   end
 
-  defp success_check_passed?(
-         {:file_contains, path, %Regex{} = pattern},
-         %{project_id: project_id},
-         _opts
-       )
-       when is_binary(project_id) and is_binary(path) do
+  def success_check_passed?(
+        {:file_contains, path, %Regex{} = pattern},
+        %{project_id: project_id},
+        _opts
+      )
+      when is_binary(project_id) and is_binary(path) do
     case Sandbox.read_file(project_id, path) do
       {:ok, content} -> Regex.match?(pattern, content)
       {:error, _reason} -> false
     end
   end
 
-  defp success_check_passed?(
-         {:file_contains, path, needle},
-         %{project_id: project_id},
-         _opts
-       )
-       when is_binary(project_id) and is_binary(path) and is_binary(needle) do
+  def success_check_passed?(
+        {:file_contains, path, needle},
+        %{project_id: project_id},
+        _opts
+      )
+      when is_binary(project_id) and is_binary(path) and is_binary(needle) do
     case Sandbox.read_file(project_id, path) do
       {:ok, content} -> String.contains?(content, needle)
       {:error, _reason} -> false
     end
   end
 
-  defp success_check_passed?({:predicate, predicate}, run_result, _opts)
-       when is_function(predicate, 1) do
+  def success_check_passed?({:predicate, predicate}, run_result, _opts)
+      when is_function(predicate, 1) do
     try do
       predicate.(run_result) == true
     rescue
@@ -80,7 +87,7 @@ defmodule Orchid.Autonomy.Scorer do
     end
   end
 
-  defp success_check_passed?(_success_check, _run_result, _opts), do: false
+  def success_check_passed?(_success_check, _run_result, _opts), do: false
 
   defp recovery_rate([]), do: 0.0
 

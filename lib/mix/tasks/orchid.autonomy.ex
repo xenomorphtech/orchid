@@ -71,7 +71,7 @@ defmodule Mix.Tasks.Orchid.Autonomy do
 
     %{
       generated_at: DateTime.utc_now() |> DateTime.to_iso8601(),
-      status: :scaffold,
+      status: suite_status(benchmark_reports),
       runs_per_benchmark: runs,
       benchmark_count: length(benchmarks),
       benchmarks: benchmark_reports,
@@ -85,14 +85,18 @@ defmodule Mix.Tasks.Orchid.Autonomy do
       |> Enum.map(fn run_index ->
         case Runner.run(benchmark) do
           {:ok, result} ->
-            score = Scorer.score(result)
+            try do
+              score = Scorer.score(result)
 
-            %{
-              run: run_index,
-              status: :scaffold,
-              result: encode_run_result(result),
-              score: score
-            }
+              %{
+                run: run_index,
+                status: Map.get(result, :status, :unknown),
+                result: encode_run_result(result),
+                score: score
+              }
+            after
+              Runner.cleanup(result)
+            end
 
           {:error, reason} ->
             %{
@@ -126,6 +130,11 @@ defmodule Mix.Tasks.Orchid.Autonomy do
       steps: Map.get(result, :steps, []),
       status: Map.get(result, :status)
     }
+    |> maybe_put(:goal_id, Map.get(result, :goal_id))
+    |> maybe_put(:turn_result, Map.get(result, :turn_result))
+    |> maybe_put(:duration_ms, Map.get(result, :duration_ms))
+    |> maybe_put(:last_assistant_message, Map.get(result, :last_assistant_message))
+    |> maybe_put(:error, error_text(Map.get(result, :error)))
   end
 
   defp encode_success_check({:shell, command}), do: %{type: :shell, command: command}
@@ -169,6 +178,20 @@ defmodule Mix.Tasks.Orchid.Autonomy do
         median(Enum.map(benchmark_reports, &get_in(&1, [:median_score, :recovery_rate])))
     }
   end
+
+  defp suite_status(benchmark_reports) do
+    if Enum.any?(benchmark_reports, &benchmark_error?/1), do: :error, else: :complete
+  end
+
+  defp benchmark_error?(%{samples: samples}) do
+    Enum.any?(samples, fn sample -> sample.status == :error end)
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp error_text(nil), do: nil
+  defp error_text(error), do: inspect(error)
 
   defp median(values) do
     sorted = Enum.sort(values)
