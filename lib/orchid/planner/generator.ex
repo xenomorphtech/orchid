@@ -10,7 +10,10 @@ defmodule Orchid.Planner.Generator do
   alias Orchid.LLM
   alias Orchid.Planner.JSON
 
+  require Logger
+
   @default_allowed_tools ~w(shell read edit list grep task_report_result)
+  @default_output_retry_attempts 6
 
   @default_llm_config %{
     provider: :openrouter,
@@ -43,12 +46,10 @@ defmodule Orchid.Planner.Generator do
   def generate(objective, completed_tasks, opts)
       when is_binary(objective) and is_list(completed_tasks) do
     opts = normalize_opts(opts)
+    system = system_prompt()
+    user = user_prompt(objective, completed_tasks, opts)
 
-    with {:ok, raw} <-
-           llm_text(system_prompt(), user_prompt(objective, completed_tasks, opts), opts),
-         {:ok, tasks} <- parse_task_array(raw) do
-      {:ok, tasks}
-    end
+    generate_with_output_retry(system, user, opts, 1, output_retry_attempts(opts))
   end
 
   def generate(_objective, _completed_tasks, _opts),
@@ -195,6 +196,49 @@ defmodule Orchid.Planner.Generator do
     end
   end
 
+  defp generate_with_output_retry(system, user, opts, attempt, max_attempts) do
+    case generate_once(system, user, opts) do
+      {:ok, tasks} ->
+        {:ok, tasks}
+
+      {:retry, reason} when attempt < max_attempts ->
+        log_output_retry(attempt, max_attempts, reason)
+        generate_with_output_retry(system, user, opts, attempt + 1, max_attempts)
+
+      {:retry, reason} ->
+        log_output_retry(attempt, max_attempts, reason)
+        {:error, reason}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp generate_once(system, user, opts) do
+    with {:ok, raw} <- llm_text(system, user, opts) do
+      case parse_task_array(raw) do
+        {:ok, tasks} -> {:ok, tasks}
+        {:error, reason} -> retryable_output_miss(reason)
+      end
+    else
+      {:error, reason = "Generator returned empty output"} -> {:retry, reason}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp retryable_output_miss("no decodable JSON array found" = reason), do: {:retry, reason}
+
+  defp retryable_output_miss("task array must contain at least one task" = reason),
+    do: {:retry, reason}
+
+  defp retryable_output_miss(reason), do: {:error, reason}
+
+  defp log_output_retry(attempt, max_attempts, reason) do
+    Logger.info(
+      "[GVR] generator output retry #{attempt}/#{max_attempts}: #{limit_text(reason, 2_000)}"
+    )
+  end
+
   defp llm_text(system, user, opts) do
     context = %{
       system: system,
@@ -323,6 +367,18 @@ defmodule Orchid.Planner.Generator do
   end
 
   defp blank_to_nil(_value), do: nil
+
+  defp output_retry_attempts(opts) do
+    opts
+    |> Map.get(:generator_output_retry_attempts, @default_output_retry_attempts)
+    |> bounded_int(@default_output_retry_attempts, 1, 8)
+  end
+
+  defp bounded_int(value, _default, min, max) when is_integer(value) do
+    value |> max(min) |> min(max)
+  end
+
+  defp bounded_int(_value, default, _min, _max), do: default
 
   defp limit_text(text, max) when is_binary(text) do
     if String.length(text) > max do

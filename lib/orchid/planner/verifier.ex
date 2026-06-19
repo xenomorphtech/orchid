@@ -11,6 +11,10 @@ defmodule Orchid.Planner.Verifier do
   alias Orchid.Planner.Generator
   alias Orchid.Planner.JSON
 
+  require Logger
+
+  @default_output_retry_attempts 6
+
   @default_llm_config %{
     provider: :openrouter,
     model: :nex_n2_pro,
@@ -34,7 +38,7 @@ defmodule Orchid.Planner.Verifier do
     plan_json = encode_tasks(tasks)
     prompt = user_prompt(objective, plan_json, workspace_context(opts))
 
-    case llm_text(system_prompt(), prompt, opts) do
+    case llm_text_with_output_retry(system_prompt(), prompt, opts, 1, output_retry_attempts(opts)) do
       {:ok, raw} -> parse_decision(raw)
       {:error, reason} -> {:flawed, reason}
     end
@@ -109,6 +113,28 @@ defmodule Orchid.Planner.Verifier do
     }
     """
     |> String.trim()
+  end
+
+  defp llm_text_with_output_retry(system, user, opts, attempt, max_attempts) do
+    case llm_text(system, user, opts) do
+      {:ok, raw} ->
+        {:ok, raw}
+
+      {:error, reason = "Verifier returned empty output"} when attempt < max_attempts ->
+        log_output_retry(attempt, max_attempts, reason)
+        llm_text_with_output_retry(system, user, opts, attempt + 1, max_attempts)
+
+      {:error, reason = "Verifier returned empty output"} ->
+        log_output_retry(attempt, max_attempts, reason)
+        {:error, reason}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp log_output_retry(attempt, max_attempts, reason) do
+    Logger.info("[GVR] verifier output retry #{attempt}/#{max_attempts}: #{reason}")
   end
 
   defp llm_text(system, user, opts) do
@@ -255,6 +281,18 @@ defmodule Orchid.Planner.Verifier do
   defp normalize_opts(opts) when is_list(opts), do: Map.new(opts)
   defp normalize_opts(opts) when is_map(opts), do: opts
   defp normalize_opts(_opts), do: %{}
+
+  defp output_retry_attempts(opts) do
+    opts
+    |> Map.get(:verifier_output_retry_attempts, @default_output_retry_attempts)
+    |> bounded_int(@default_output_retry_attempts, 1, 8)
+  end
+
+  defp bounded_int(value, _default, min, max) when is_integer(value) do
+    value |> max(min) |> min(max)
+  end
+
+  defp bounded_int(_value, default, _min, _max), do: default
 
   defp drop_nil_values(map) do
     Map.new(map, fn {key, value} -> {key, value} end)
