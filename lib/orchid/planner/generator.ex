@@ -1,0 +1,295 @@
+defmodule Orchid.Planner.Generator do
+  @moduledoc """
+  LLM-backed Generator node for recursive G-V-R planning.
+
+  The generator decomposes one objective into a JSON task array. Each task is
+  either a `:delegate` node for unresolved work or a concrete `:tool` node with
+  exact Orchid tool arguments.
+  """
+
+  alias Orchid.LLM
+
+  @default_allowed_tools ~w(shell read edit list grep task_report_result)
+
+  @default_llm_config %{
+    provider: :openrouter,
+    model: :nex_n2_pro,
+    disable_tools: true,
+    max_turns: 1,
+    max_tokens: 2_400
+  }
+
+  @type task_type :: :delegate | :tool
+
+  @type task :: %{
+          required(:id) => String.t(),
+          required(:type) => task_type(),
+          required(:objective) => String.t(),
+          optional(:tool) => String.t(),
+          optional(:args) => map()
+        }
+
+  @spec decompose(String.t(), [task()], keyword() | map()) ::
+          {:ok, [task()]} | {:error, String.t()}
+  def decompose(objective, completed_tasks \\ [], opts \\ []) do
+    generate(objective, completed_tasks, opts)
+  end
+
+  @spec generate(String.t(), [task()], keyword() | map()) ::
+          {:ok, [task()]} | {:error, String.t()}
+  def generate(objective, completed_tasks \\ [], opts \\ [])
+
+  def generate(objective, completed_tasks, opts)
+      when is_binary(objective) and is_list(completed_tasks) do
+    opts = normalize_opts(opts)
+
+    with {:ok, raw} <-
+           llm_text(system_prompt(), user_prompt(objective, completed_tasks, opts), opts),
+         {:ok, tasks} <- parse_task_array(raw) do
+      {:ok, tasks}
+    end
+  end
+
+  def generate(_objective, _completed_tasks, _opts),
+    do: {:error, "objective must be a string and completed_tasks must be a list"}
+
+  @spec parse_task_array(String.t()) :: {:ok, [task()]} | {:error, String.t()}
+  def parse_task_array(raw) when is_binary(raw) do
+    with {:ok, decoded} <- decode_json(raw),
+         {:ok, list} <- extract_task_list(decoded),
+         {:ok, tasks} <- normalize_tasks(list) do
+      {:ok, tasks}
+    end
+  end
+
+  def parse_task_array(_raw), do: {:error, "generator output must be a string"}
+
+  defp system_prompt do
+    """
+    You are the Generator node in a recursive Generator-Verifier-Reviser planner.
+
+    Decompose the current objective into immediate next tasks using lazy
+    hierarchical planning:
+
+    - Use type "delegate" when the sub-task is broad, investigative, or missing
+      concrete execution details.
+    - Use type "tool" only when the exact Orchid tool name and exact JSON args
+      are known now.
+
+    Strict rules for tool tasks:
+    - Do not emit placeholders, TODOs, comments-as-commands, or guessed paths.
+    - If a shell command is needed, args.command must be concrete and runnable.
+    - If a file path, pattern, or command flag is unknown, emit a delegate task
+      to discover it instead.
+
+    Return ONLY a valid JSON array of task objects. Do not include markdown.
+    """
+    |> String.trim()
+  end
+
+  defp user_prompt(objective, completed_tasks, opts) do
+    allowed_tools = allowed_tools(opts) |> Enum.join(", ")
+    path_note = path_note(opts)
+
+    """
+    CURRENT OBJECTIVE:
+    #{objective}
+
+    COMPLETED HISTORY:
+    #{inspect(completed_tasks, limit: 50)}
+
+    #{path_note}
+
+    AVAILABLE ORCHID TOOLS FOR TOOL TASKS:
+    #{allowed_tools}
+
+    WORKSPACE CONTEXT:
+    #{Map.get(opts, :workspace_context, "(not provided)")}
+
+    Output a JSON array. Every object must include:
+    - "id": a stable, short, unique identifier string
+    - "type": exactly "delegate" or "tool"
+    - "objective": one concise sentence
+
+    Tool objects must also include:
+    - "tool": exact Orchid tool name from the allowed list
+    - "args": exact JSON object for that tool
+    """
+    |> String.trim()
+  end
+
+  defp path_note(opts) do
+    index = Map.get(opts, :path_index)
+    count = Map.get(opts, :path_count)
+
+    cond do
+      is_integer(index) and is_integer(count) and count > 1 ->
+        """
+        CANDIDATE PLAN #{index} OF #{count}:
+        Make this decomposition meaningfully different where the objective
+        allows alternatives, but never sacrifice executability.
+        """
+        |> String.trim()
+
+      true ->
+        ""
+    end
+  end
+
+  defp llm_text(system, user, opts) do
+    context = %{
+      system: system,
+      messages: [%{role: :user, content: user}],
+      objects: "",
+      memory: %{}
+    }
+
+    case LLM.chat(llm_config(opts), context) do
+      {:ok, %{content: content}} when is_binary(content) ->
+        trimmed = String.trim(content)
+
+        if trimmed == "" do
+          {:error, "Generator returned empty output"}
+        else
+          {:ok, trimmed}
+        end
+
+      {:error, reason} ->
+        {:error, "Generator LLM failed: #{inspect(reason)}"}
+    end
+  end
+
+  defp llm_config(opts) do
+    llm_config =
+      opts
+      |> Map.get(:llm_config, %{})
+      |> normalize_opts()
+
+    @default_llm_config
+    |> Map.merge(drop_nil_values(llm_config))
+    |> Map.put(:disable_tools, true)
+  end
+
+  defp allowed_tools(opts) do
+    case Map.get(opts, :allowed_tools) do
+      names when is_list(names) and names != [] -> Enum.map(names, &to_string/1)
+      _ -> @default_allowed_tools
+    end
+  end
+
+  defp decode_json(raw) do
+    text = raw |> String.trim() |> strip_code_fence()
+
+    case Jason.decode(text) do
+      {:ok, decoded} ->
+        {:ok, decoded}
+
+      _ ->
+        case Regex.run(~r/\[[\s\S]*\]/, text) do
+          [json] -> Jason.decode(json)
+          _ -> {:error, "no JSON array found"}
+        end
+    end
+  end
+
+  defp strip_code_fence(text) do
+    text
+    |> String.replace(~r/\A```(?:json)?\s*/i, "")
+    |> String.replace(~r/\s*```\z/, "")
+    |> String.trim()
+  end
+
+  defp extract_task_list(list) when is_list(list), do: {:ok, list}
+  defp extract_task_list(%{"tasks" => list}) when is_list(list), do: {:ok, list}
+  defp extract_task_list(_decoded), do: {:error, "response must be a JSON task array"}
+
+  defp normalize_tasks(tasks) do
+    tasks
+    |> Enum.with_index(1)
+    |> Enum.reduce_while({:ok, []}, fn {raw_task, index}, {:ok, acc} ->
+      case normalize_task(raw_task, index) do
+        {:ok, task} -> {:cont, {:ok, acc ++ [task]}}
+        {:error, reason} -> {:halt, {:error, "task #{index}: #{reason}"}}
+      end
+    end)
+  end
+
+  defp normalize_task(raw_task, index) when is_map(raw_task) do
+    type = raw_task |> string_field("type") |> normalize_type()
+    objective = raw_task |> string_field("objective") |> blank_to_nil()
+    id = raw_task |> string_field("id") |> blank_to_nil() || "task_#{index}"
+
+    cond do
+      type not in [:delegate, :tool] ->
+        {:error, "type must be delegate or tool"}
+
+      is_nil(objective) ->
+        {:error, "objective is required"}
+
+      type == :delegate ->
+        {:ok, %{id: id, type: :delegate, objective: objective}}
+
+      true ->
+        normalize_tool_task(raw_task, id, objective)
+    end
+  end
+
+  defp normalize_task(_raw_task, _index), do: {:error, "task must be a JSON object"}
+
+  defp normalize_tool_task(raw_task, id, objective) do
+    tool = raw_task |> string_field("tool") |> blank_to_nil()
+    args = map_field(raw_task, "args")
+
+    cond do
+      is_nil(tool) ->
+        {:error, "tool task requires tool"}
+
+      not is_map(args) ->
+        {:error, "tool task requires args object"}
+
+      true ->
+        {:ok, %{id: id, type: :tool, objective: objective, tool: tool, args: args}}
+    end
+  end
+
+  defp string_field(map, key) do
+    case Map.get(map, key) || Map.get(map, String.to_atom(key)) do
+      value when is_binary(value) -> String.trim(value)
+      value when is_atom(value) -> value |> Atom.to_string() |> String.trim()
+      _ -> nil
+    end
+  end
+
+  defp map_field(map, key) do
+    case Map.get(map, key) || Map.get(map, String.to_atom(key)) do
+      value when is_map(value) -> value
+      _ -> nil
+    end
+  end
+
+  defp normalize_type(nil), do: nil
+
+  defp normalize_type(value) do
+    case value |> to_string() |> String.downcase() do
+      "delegate" -> :delegate
+      "tool" -> :tool
+      _ -> nil
+    end
+  end
+
+  defp blank_to_nil(value) when is_binary(value) do
+    if value == "", do: nil, else: value
+  end
+
+  defp blank_to_nil(_value), do: nil
+
+  defp normalize_opts(opts) when is_list(opts), do: Map.new(opts)
+  defp normalize_opts(opts) when is_map(opts), do: opts
+  defp normalize_opts(_opts), do: %{}
+
+  defp drop_nil_values(map) do
+    Map.new(map, fn {key, value} -> {key, value} end)
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+end
