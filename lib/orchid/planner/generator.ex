@@ -8,6 +8,7 @@ defmodule Orchid.Planner.Generator do
   """
 
   alias Orchid.LLM
+  alias Orchid.Planner.JSON
 
   @default_allowed_tools ~w(shell read edit list grep task_report_result)
 
@@ -55,8 +56,7 @@ defmodule Orchid.Planner.Generator do
 
   @spec parse_task_array(String.t()) :: {:ok, [task()]} | {:error, String.t()}
   def parse_task_array(raw) when is_binary(raw) do
-    with {:ok, decoded} <- decode_json(raw),
-         {:ok, list} <- extract_task_list(decoded),
+    with {:ok, list} <- JSON.extract_json(raw, :array),
          {:ok, tasks} <- normalize_tasks(list) do
       {:ok, tasks}
     end
@@ -177,104 +177,6 @@ defmodule Orchid.Planner.Generator do
     end
   end
 
-  defp decode_json(raw) do
-    text = raw |> String.trim() |> strip_code_fence()
-
-    [text | fenced_json_blocks(text)]
-    |> Enum.flat_map(fn candidate -> [candidate | balanced_json_arrays(candidate)] end)
-    |> Enum.find_value(fn candidate ->
-      case Jason.decode(candidate) do
-        {:ok, decoded} -> {:ok, decoded}
-        {:error, _reason} -> nil
-      end
-    end)
-    |> case do
-      nil -> {:error, "no decodable JSON task array found"}
-      result -> result
-    end
-  end
-
-  defp strip_code_fence(text) do
-    text
-    |> String.replace(~r/\A```(?:json)?\s*/i, "")
-    |> String.replace(~r/\s*```\z/, "")
-    |> String.trim()
-  end
-
-  defp fenced_json_blocks(text) do
-    ~r/```(?:json)?\s*([\s\S]*?)```/i
-    |> Regex.scan(text, capture: :all_but_first)
-    |> Enum.map(fn [block] -> String.trim(block) end)
-  end
-
-  defp balanced_json_arrays(text) when is_binary(text) do
-    decode_balanced_json_arrays(text, 0, [])
-  end
-
-  defp decode_balanced_json_arrays(text, offset, acc) when offset < byte_size(text) do
-    rest = binary_part(text, offset, byte_size(text) - offset)
-
-    case :binary.match(rest, "[") do
-      {relative_start, 1} ->
-        start = offset + relative_start
-
-        case balanced_json_array_from(text, start) do
-          {:ok, json} -> decode_balanced_json_arrays(text, start + 1, acc ++ [json])
-          :error -> decode_balanced_json_arrays(text, start + 1, acc)
-        end
-
-      :nomatch ->
-        acc
-    end
-  end
-
-  defp decode_balanced_json_arrays(_text, _offset, acc), do: acc
-
-  defp balanced_json_array_from(text, start) do
-    scan_balanced_json_array(text, start, start, 0, false, false)
-  end
-
-  defp scan_balanced_json_array(text, position, start, depth, in_string?, escape?)
-       when position < byte_size(text) do
-    byte = :binary.at(text, position)
-
-    cond do
-      in_string? and escape? ->
-        scan_balanced_json_array(text, position + 1, start, depth, true, false)
-
-      in_string? and byte == ?\\ ->
-        scan_balanced_json_array(text, position + 1, start, depth, true, true)
-
-      in_string? and byte == ?" ->
-        scan_balanced_json_array(text, position + 1, start, depth, false, false)
-
-      in_string? ->
-        scan_balanced_json_array(text, position + 1, start, depth, true, false)
-
-      byte == ?" ->
-        scan_balanced_json_array(text, position + 1, start, depth, true, false)
-
-      byte == ?[ ->
-        scan_balanced_json_array(text, position + 1, start, depth + 1, false, false)
-
-      byte == ?] and depth == 1 ->
-        {:ok, binary_part(text, start, position - start + 1)}
-
-      byte == ?] ->
-        scan_balanced_json_array(text, position + 1, start, depth - 1, false, false)
-
-      true ->
-        scan_balanced_json_array(text, position + 1, start, depth, false, false)
-    end
-  end
-
-  defp scan_balanced_json_array(_text, _position, _start, _depth, _in_string?, _escape?),
-    do: :error
-
-  defp extract_task_list(list) when is_list(list), do: {:ok, list}
-  defp extract_task_list(%{"tasks" => list}) when is_list(list), do: {:ok, list}
-  defp extract_task_list(_decoded), do: {:error, "response must be a JSON task array"}
-
   defp normalize_tasks(tasks) do
     tasks
     |> Enum.with_index(1)
@@ -341,13 +243,15 @@ defmodule Orchid.Planner.Generator do
 
   defp normalize_type(nil), do: nil
 
-  defp normalize_type(value) do
-    case value |> to_string() |> String.downcase() do
+  defp normalize_type(value) when is_binary(value) do
+    case String.downcase(value) do
       "delegate" -> :delegate
       "tool" -> :tool
       _ -> nil
     end
   end
+
+  defp normalize_type(_value), do: nil
 
   defp blank_to_nil(value) when is_binary(value) do
     if value == "", do: nil, else: value

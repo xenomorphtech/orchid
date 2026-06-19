@@ -9,6 +9,7 @@ defmodule Orchid.Planner.Verifier do
 
   alias Orchid.{LLM, Project}
   alias Orchid.Planner.Generator
+  alias Orchid.Planner.JSON
 
   @default_llm_config %{
     provider: :openrouter,
@@ -31,7 +32,6 @@ defmodule Orchid.Planner.Verifier do
   def verify(objective, tasks, opts) when is_binary(objective) and is_list(tasks) do
     opts = normalize_opts(opts)
     plan_json = encode_tasks(tasks)
-
     prompt = user_prompt(objective, plan_json, workspace_context(opts))
 
     case llm_text(system_prompt(), prompt, opts) do
@@ -45,18 +45,30 @@ defmodule Orchid.Planner.Verifier do
 
   @spec parse_decision(String.t()) :: decision()
   def parse_decision(raw) when is_binary(raw) do
-    with {:ok, decoded} <- decode_json(raw),
-         {:ok, status} <- decision_status(decoded) do
-      case status do
-        :approved -> {:approved, decision_message(decoded, "reason", raw)}
-        :flawed -> {:flawed, decision_message(decoded, "critique", raw)}
-      end
-    else
-      {:error, reason} -> {:flawed, "Verifier returned invalid JSON: #{reason}"}
+    case JSON.extract_json(raw, :object) do
+      {:ok, decoded} ->
+        case decision_status(decoded) do
+          {:ok, :approved} -> {:approved, decision_message(decoded, "reason", raw)}
+          {:ok, :flawed} -> {:flawed, decision_message(decoded, "critique", raw)}
+          {:error, reason} -> {:flawed, raw_critique(raw, reason)}
+        end
+
+      {:error, reason} ->
+        {:flawed, raw_critique(raw, reason)}
     end
   end
 
   def parse_decision(_raw), do: {:flawed, "Verifier output must be a string"}
+
+  defp raw_critique(raw, reason) do
+    """
+    Verifier returned a non-JSON or invalid decision: #{reason}
+
+    Raw verifier output:
+    #{String.slice(raw, 0, 1_500)}
+    """
+    |> String.trim()
+  end
 
   defp system_prompt do
     """
@@ -118,7 +130,7 @@ defmodule Orchid.Planner.Verifier do
         end
 
       {:error, reason} ->
-        {:error, "Verifier LLM failed: #{inspect(reason)}"}
+        {:error, "Verifier LLM failed: #{JSON.render_error(reason)}"}
     end
   end
 
@@ -169,28 +181,6 @@ defmodule Orchid.Planner.Verifier do
     else
       Enum.join(files, "\n")
     end
-  end
-
-  defp decode_json(raw) do
-    text = raw |> String.trim() |> strip_code_fence()
-
-    case Jason.decode(text) do
-      {:ok, decoded} ->
-        {:ok, decoded}
-
-      _ ->
-        case Regex.run(~r/\{[\s\S]*\}/, text) do
-          [json] -> Jason.decode(json)
-          _ -> {:error, "no JSON object found"}
-        end
-    end
-  end
-
-  defp strip_code_fence(text) do
-    text
-    |> String.replace(~r/\A```(?:json)?\s*/i, "")
-    |> String.replace(~r/\s*```\z/, "")
-    |> String.trim()
   end
 
   defp decision_status(%{"status" => status}) when is_binary(status) do
