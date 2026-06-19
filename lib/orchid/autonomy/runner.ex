@@ -116,7 +116,7 @@ defmodule Orchid.Autonomy.Runner do
 
   defp runner_mode(opts) do
     opts
-    |> Keyword.get(:mode, :flat)
+    |> Keyword.get(:mode, :auto)
     |> normalize_mode()
   end
 

@@ -28,7 +28,7 @@ defmodule Mix.Tasks.Orchid.Autonomy do
 
     runs = Keyword.get(opts, :runs, 3)
     validate_runs!(runs)
-    mode = opts |> Keyword.get(:mode, "flat") |> parse_mode!()
+    mode = opts |> Keyword.get(:mode, "auto") |> parse_mode!()
     runner_opts = build_runner_opts(opts)
 
     benchmarks = load_benchmarks()
