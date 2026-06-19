@@ -13,15 +13,20 @@ defmodule Mix.Tasks.Orchid.Autonomy do
 
   @impl Mix.Task
   def run(args) do
-    {opts, _argv, invalid} = OptionParser.parse(args, strict: [runs: :integer, mode: :string])
+    {opts, _argv, invalid} =
+      OptionParser.parse(args,
+        strict: [runs: :integer, mode: :string, max_rounds: :integer, max_delegate_depth: :integer]
+      )
+
     reject_invalid_options!(invalid)
 
     runs = Keyword.get(opts, :runs, 3)
     validate_runs!(runs)
     mode = opts |> Keyword.get(:mode, "flat") |> parse_mode!()
+    runner_opts = build_runner_opts(opts)
 
     benchmarks = load_benchmarks()
-    report = build_report(benchmarks, runs, mode)
+    report = build_report(benchmarks, runs, mode, runner_opts)
 
     write_report!(report)
 
@@ -29,6 +34,19 @@ defmodule Mix.Tasks.Orchid.Autonomy do
       "orchid.autonomy: loaded #{length(benchmarks)} benchmark(s), #{runs} #{mode} run(s) each; wrote #{@report_path}"
     )
   end
+
+  # Translate CLI bounding flags into Runner opts. Only includes a key when the
+  # flag was passed, so the Runner's own defaults (gvr_max_rounds 6,
+  # gvr_max_delegate_depth 3) still apply when unset. Bounding these makes the
+  # G-V-R recursive delegate*revise call count tractable on a slow free model.
+  defp build_runner_opts(opts) do
+    []
+    |> maybe_put_opt(:gvr_max_rounds, Keyword.get(opts, :max_rounds))
+    |> maybe_put_opt(:gvr_max_delegate_depth, Keyword.get(opts, :max_delegate_depth))
+  end
+
+  defp maybe_put_opt(kw, _key, nil), do: kw
+  defp maybe_put_opt(kw, key, value), do: Keyword.put(kw, key, value)
 
   @doc """
   Load benchmark structs from `test/autonomy/benchmarks/*.exs`.
@@ -74,8 +92,8 @@ defmodule Mix.Tasks.Orchid.Autonomy do
     end
   end
 
-  defp build_report(benchmarks, runs, mode) do
-    benchmark_reports = Enum.map(benchmarks, &benchmark_report(&1, runs, mode))
+  defp build_report(benchmarks, runs, mode, runner_opts) do
+    benchmark_reports = Enum.map(benchmarks, &benchmark_report(&1, runs, mode, runner_opts))
 
     %{
       generated_at: DateTime.utc_now() |> DateTime.to_iso8601(),
@@ -89,11 +107,11 @@ defmodule Mix.Tasks.Orchid.Autonomy do
     }
   end
 
-  defp benchmark_report(%Benchmark{} = benchmark, runs, mode) do
+  defp benchmark_report(%Benchmark{} = benchmark, runs, mode, runner_opts) do
     samples =
       1..runs
       |> Enum.map(fn run_index ->
-        case Runner.run(benchmark, mode: mode) do
+        case Runner.run(benchmark, [mode: mode] ++ runner_opts) do
           {:ok, result} ->
             try do
               score = Scorer.score(result)
