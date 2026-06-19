@@ -8,8 +8,7 @@ defmodule Orchid.Planner.Verifier do
   """
 
   alias Orchid.{LLM, Project}
-  alias Orchid.Planner.Generator
-  alias Orchid.Planner.JSON
+  alias Orchid.Planner.{Generator, JSON, LLMMemo}
 
   require Logger
 
@@ -38,10 +37,19 @@ defmodule Orchid.Planner.Verifier do
     plan_json = encode_tasks(tasks)
     prompt = user_prompt(objective, plan_json, workspace_context(opts))
 
-    case llm_text_with_output_retry(system_prompt(), prompt, opts, 1, output_retry_attempts(opts)) do
-      {:ok, raw} -> parse_decision(raw)
-      {:error, reason} -> {:flawed, reason}
-    end
+    system = system_prompt()
+
+    LLMMemo.fetch(
+      llm_cache_key(:verifier, system, prompt, opts),
+      opts,
+      &cacheable_verify_result?/1,
+      fn ->
+        case llm_text_with_output_retry(system, prompt, opts, 1, output_retry_attempts(opts)) do
+          {:ok, raw} -> parse_decision(raw)
+          {:error, reason} -> {:flawed, reason}
+        end
+      end
+    )
   end
 
   def verify(_objective, _tasks, _opts),
@@ -136,6 +144,25 @@ defmodule Orchid.Planner.Verifier do
   defp log_output_retry(attempt, max_attempts, reason) do
     Logger.info("[GVR] verifier output retry #{attempt}/#{max_attempts}: #{reason}")
   end
+
+  defp llm_cache_key(node, system, user, opts) do
+    [
+      node: node,
+      llm_module: llm_module(opts),
+      llm_config: llm_config(opts),
+      system: system,
+      user: user
+    ]
+  end
+
+  defp cacheable_verify_result?({:approved, reason}) when is_binary(reason), do: true
+
+  defp cacheable_verify_result?({:flawed, critique}) when is_binary(critique) do
+    not String.starts_with?(critique, "Verifier returned empty output") and
+      not String.starts_with?(critique, "Verifier LLM failed:")
+  end
+
+  defp cacheable_verify_result?(_result), do: false
 
   defp llm_text(system, user, opts) do
     context = %{

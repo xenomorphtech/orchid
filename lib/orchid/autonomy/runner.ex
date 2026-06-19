@@ -627,6 +627,7 @@ defmodule Orchid.Autonomy.Runner do
       num_paths: Keyword.get(opts, :gvr_num_paths, 1),
       max_iterations: 1,
       max_concurrency: Keyword.get(opts, :gvr_num_paths, 1),
+      llm_memoize: Keyword.get(opts, :gvr_llm_memoize, true),
       project_id: project_id,
       completed_tasks: context.completed_tasks,
       allowed_tools: @agent_tools,

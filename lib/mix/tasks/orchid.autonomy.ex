@@ -19,7 +19,8 @@ defmodule Mix.Tasks.Orchid.Autonomy do
           runs: :integer,
           mode: :string,
           max_rounds: :integer,
-          max_delegate_depth: :integer
+          max_delegate_depth: :integer,
+          gvr_memoize: :boolean
         ]
       )
 
@@ -48,6 +49,7 @@ defmodule Mix.Tasks.Orchid.Autonomy do
     []
     |> maybe_put_opt(:gvr_max_rounds, Keyword.get(opts, :max_rounds))
     |> maybe_put_opt(:gvr_max_delegate_depth, Keyword.get(opts, :max_delegate_depth))
+    |> maybe_put_opt(:gvr_llm_memoize, Keyword.get(opts, :gvr_memoize))
   end
 
   defp maybe_put_opt(kw, _key, nil), do: kw

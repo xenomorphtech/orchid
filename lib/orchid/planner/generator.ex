@@ -8,7 +8,7 @@ defmodule Orchid.Planner.Generator do
   """
 
   alias Orchid.LLM
-  alias Orchid.Planner.JSON
+  alias Orchid.Planner.{JSON, LLMMemo}
 
   require Logger
 
@@ -49,7 +49,12 @@ defmodule Orchid.Planner.Generator do
     system = system_prompt()
     user = user_prompt(objective, completed_tasks, opts)
 
-    generate_with_output_retry(system, user, opts, 1, output_retry_attempts(opts))
+    LLMMemo.fetch(
+      llm_cache_key(:generator, system, user, opts),
+      opts,
+      &cacheable_generate_result?/1,
+      fn -> generate_with_output_retry(system, user, opts, 1, output_retry_attempts(opts)) end
+    )
   end
 
   def generate(_objective, _completed_tasks, _opts),
@@ -225,6 +230,19 @@ defmodule Orchid.Planner.Generator do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp llm_cache_key(node, system, user, opts) do
+    [
+      node: node,
+      llm_module: llm_module(opts),
+      llm_config: llm_config(opts),
+      system: system,
+      user: user
+    ]
+  end
+
+  defp cacheable_generate_result?({:ok, tasks}) when is_list(tasks), do: true
+  defp cacheable_generate_result?(_result), do: false
 
   defp retryable_output_miss("no decodable JSON array found" = reason), do: {:retry, reason}
 
