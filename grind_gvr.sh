@@ -36,7 +36,14 @@ preflight_quota() {
 preflight_quota
 # ------------------------------------------------------------------------------
 
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting gvr grind (rounds=6 depth=1 — adequate revision budget, no deep recursion)"
+# The 4 EASY benchmarks (flat baseline 0.833, in last_report.json). Needed under
+# gvr for the H1 no-easy-regression half: H1 = gvr beats flat on the discriminators
+# AND does NOT regress the easy goals. grind_gvr.sh covered only the discriminator
+# half; without these 4 the no-regression check is unmeasurable.
+EASY_IDS="build_cli_wordcount,operate_service_health,recover_broken_healthcheck,research_incident_summary"
+
+# Discriminators FIRST (the decisive half — captured before any quota drawdown).
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting gvr DISCRIMINATOR grind (rounds=6 depth=1 — adequate revision budget, no deep recursion)"
 mix orchid.autonomy \
   --mode gvr \
   --runs 3 \
@@ -45,4 +52,17 @@ mix orchid.autonomy \
   --gvr-memoize \
   --max-rounds 6 \
   --max-delegate-depth 1
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gvr grind DONE (exit $?)"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gvr DISCRIMINATOR grind DONE (exit $?)"
+
+# Easy goals under gvr (for the no-regression half). Separate --out so the
+# analyzer can compare against the flat-easy 0.833 baseline (last_report.json).
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting gvr EASY grind (no-regression half)"
+mix orchid.autonomy \
+  --mode gvr \
+  --runs 3 \
+  --only "$EASY_IDS" \
+  --out priv/autonomy/easy_gvr.json \
+  --gvr-memoize \
+  --max-rounds 6 \
+  --max-delegate-depth 1
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] gvr EASY grind DONE (exit $?)"
