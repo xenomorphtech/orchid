@@ -89,12 +89,21 @@ defmodule Orchid.Autonomy.Scorer do
 
   def success_check_passed?(_success_check, _run_result, _opts), do: false
 
-  defp recovery_rate([]), do: 0.0
-
   defp recovery_rate(events) when is_list(events) do
-    recovered = Enum.count(events, &recovered?/1)
-    recovered / length(events)
+    injected_events = Enum.filter(events, &injected?/1)
+
+    case injected_events do
+      [] ->
+        0.0
+
+      _ ->
+        recovered = Enum.count(injected_events, &recovered?/1)
+        recovered / length(injected_events)
+    end
   end
+
+  defp injected?(%{injected: false}), do: false
+  defp injected?(_event), do: true
 
   defp recovered?(%{recovered: true}), do: true
   defp recovered?(%{status: :recovered}), do: true

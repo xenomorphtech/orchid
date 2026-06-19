@@ -11,7 +11,7 @@ defmodule Orchid.Autonomy.Runner do
   """
 
   alias Orchid.Autonomy.{Benchmark, Runtime, Scorer}
-  alias Orchid.{Agent, Goals, Object, Projects, Sandbox}
+  alias Orchid.{Agent, Goals, Object, Project, Projects, Sandbox}
 
   @type step :: %{
           optional(:index) => non_neg_integer(),
@@ -24,6 +24,12 @@ defmodule Orchid.Autonomy.Runner do
 
   @type recovery_event :: %{
           optional(:step) => non_neg_integer(),
+          optional(:id) => String.t(),
+          optional(:description) => String.t(),
+          optional(:check) => String.t(),
+          optional(:injected) => boolean(),
+          optional(:initial_passed) => boolean(),
+          optional(:final_passed) => boolean(),
           optional(:status) => atom(),
           optional(:reason) => term(),
           optional(:recovered) => boolean()
@@ -65,11 +71,21 @@ defmodule Orchid.Autonomy.Runner do
     with :ok <- validate_max_steps(max_steps),
          :ok <- Runtime.ensure_started(),
          {:ok, project} <- ensure_project(benchmark, opts),
+         :ok <- seed_project_files(benchmark, project.id),
          :ok <- ensure_sandbox(project.id),
+         initial_recovery <- detect_initial_recovery(benchmark, project.id, opts),
          {:ok, agent_id} <- Agent.create(agent_config(benchmark, project.id, opts)),
          {:ok, goal} <- create_goal(benchmark, project.id),
          {:ok, result} <-
-           run_assigned_goal(benchmark, project.id, goal, agent_id, max_steps, opts) do
+           run_assigned_goal(
+             benchmark,
+             project.id,
+             goal,
+             agent_id,
+             max_steps,
+             initial_recovery,
+             opts
+           ) do
       {:ok, result}
     end
   end
@@ -112,6 +128,44 @@ defmodule Orchid.Autonomy.Runner do
       wait_for_sandbox(project_id, 120_000)
     end
   end
+
+  defp seed_project_files(%Benchmark{seed_files: []}, _project_id), do: :ok
+
+  defp seed_project_files(%Benchmark{seed_files: seed_files}, project_id) do
+    root = Project.files_path(project_id) |> Path.expand()
+    File.mkdir_p!(root)
+
+    Enum.reduce_while(seed_files, :ok, fn seed_file, :ok ->
+      case write_seed_file(root, seed_file) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp write_seed_file(root, %{path: path, content: content} = seed_file) do
+    with {:ok, target} <- seed_target(root, path),
+         :ok <- File.mkdir_p(Path.dirname(target)),
+         :ok <- File.write(target, content),
+         :ok <- maybe_chmod(target, Map.get(seed_file, :mode)) do
+      :ok
+    end
+  end
+
+  defp seed_target(root, path) when is_binary(path) do
+    target = Path.expand(path, root)
+
+    if target == root or String.starts_with?(target, root <> "/") do
+      {:ok, target}
+    else
+      {:error, {:invalid_seed_path, path}}
+    end
+  end
+
+  defp seed_target(_root, path), do: {:error, {:invalid_seed_path, path}}
+
+  defp maybe_chmod(_target, nil), do: :ok
+  defp maybe_chmod(target, mode), do: File.chmod(target, mode)
 
   defp wait_for_sandbox(project_id, timeout_ms) do
     deadline = monotonic_ms() + timeout_ms
@@ -157,7 +211,33 @@ defmodule Orchid.Autonomy.Runner do
     Goals.create("Autonomy benchmark: #{benchmark.id}", goal_description(benchmark), project_id)
   end
 
-  defp run_assigned_goal(benchmark, project_id, goal, agent_id, max_steps, opts) do
+  defp detect_initial_recovery(%Benchmark{recovery_checks: []}, _project_id, _opts), do: []
+
+  defp detect_initial_recovery(%Benchmark{recovery_checks: recovery_checks}, project_id, opts) do
+    Enum.map(recovery_checks, fn recovery_check ->
+      check = Map.fetch!(recovery_check, :check)
+      initial_passed = Scorer.success_check_passed?(check, %{project_id: project_id}, opts)
+
+      %{
+        id: Map.fetch!(recovery_check, :id),
+        description: Map.get(recovery_check, :description),
+        check: check,
+        check_label: success_check_text(check),
+        injected: not initial_passed,
+        initial_passed: initial_passed
+      }
+    end)
+  end
+
+  defp run_assigned_goal(
+         benchmark,
+         project_id,
+         goal,
+         agent_id,
+         max_steps,
+         initial_recovery,
+         opts
+       ) do
     started_at = monotonic_ms()
 
     try do
@@ -174,6 +254,7 @@ defmodule Orchid.Autonomy.Runner do
             agent_state,
             turn_result,
             max_steps,
+            initial_recovery,
             opts,
             started_at
           )
@@ -224,6 +305,7 @@ defmodule Orchid.Autonomy.Runner do
          agent_state,
          turn_result,
          max_steps,
+         initial_recovery,
          opts,
          started_at
        ) do
@@ -256,9 +338,35 @@ defmodule Orchid.Autonomy.Runner do
 
     base_result
     |> Map.put(:closed, closed)
+    |> Map.put(:recovered, recovery_events(initial_recovery, project_id, opts))
     |> Map.put(:status, run_status(closed, depth, max_steps, turn_result))
     |> maybe_put_error(turn_result)
   end
+
+  defp recovery_events([], _project_id, _opts), do: []
+
+  defp recovery_events(initial_recovery, project_id, opts) do
+    Enum.map(initial_recovery, fn initial ->
+      final_passed = Scorer.success_check_passed?(initial.check, %{project_id: project_id}, opts)
+      recovered = initial.injected and final_passed
+
+      %{
+        id: initial.id,
+        description: initial.description,
+        check: initial.check_label,
+        injected: initial.injected,
+        initial_passed: initial.initial_passed,
+        final_passed: final_passed,
+        recovered: recovered,
+        status: recovery_status(initial.injected, final_passed)
+      }
+    end)
+  end
+
+  defp recovery_status(true, true), do: :recovered
+  defp recovery_status(true, false), do: :unrecovered
+  defp recovery_status(false, true), do: :not_injected
+  defp recovery_status(false, false), do: :invalid
 
   defp tool_history(nil), do: []
   defp tool_history(%{tool_history: history}) when is_list(history), do: history
@@ -383,6 +491,9 @@ defmodule Orchid.Autonomy.Runner do
     Acceptance check:
     #{success_check_text(benchmark.success_check)}
 
+    #{seed_files_text(benchmark)}
+    #{recovery_text(benchmark)}
+
     Work entirely in /workspace. Do not ask for human input. Use tools to inspect,
     create, edit, and test the implementation. Before finishing, run the
     acceptance check or an equivalent verification command and report the result.
@@ -401,6 +512,9 @@ defmodule Orchid.Autonomy.Runner do
 
     Deterministic success check:
     #{success_check_text(benchmark.success_check)}
+
+    #{seed_files_text(benchmark)}
+    #{recovery_text(benchmark)}
 
     Stop only after the check passes or you are blocked by a concrete technical
     error. Keep the final report concise and include files changed and commands
@@ -422,6 +536,24 @@ defmodule Orchid.Autonomy.Runner do
 
   defp success_check_text({:predicate, _predicate}), do: "pure Elixir predicate"
   defp success_check_text(other), do: inspect(other)
+
+  defp seed_files_text(%Benchmark{seed_files: []}), do: ""
+
+  defp seed_files_text(%Benchmark{seed_files: seed_files}) do
+    paths = seed_files |> Enum.map(& &1.path) |> Enum.join(", ")
+    "Seeded workspace files: #{paths}"
+  end
+
+  defp recovery_text(%Benchmark{recovery_checks: []}), do: ""
+
+  defp recovery_text(%Benchmark{recovery_checks: recovery_checks}) do
+    labels =
+      recovery_checks
+      |> Enum.map(fn check -> "#{check.id}: #{success_check_text(check.check)}" end)
+      |> Enum.join("; ")
+
+    "Recovery checks start failing by design. Repair the seeded fault so they pass: #{labels}"
+  end
 
   defp timestamp_id do
     DateTime.utc_now()

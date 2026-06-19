@@ -9,7 +9,7 @@ defmodule Orchid.Autonomy.Benchmark do
   """
 
   @enforce_keys [:id, :objective, :success_check, :max_steps, :category]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [seed_files: [], recovery_checks: []]
 
   @type category :: :research | :development | :operation
 
@@ -19,12 +19,26 @@ defmodule Orchid.Autonomy.Benchmark do
           | {:file_contains, String.t(), String.t() | Regex.t()}
           | {:predicate, (map() -> boolean())}
 
+  @type seed_file :: %{
+          required(:path) => String.t(),
+          required(:content) => String.t(),
+          optional(:mode) => non_neg_integer()
+        }
+
+  @type recovery_check :: %{
+          required(:id) => String.t(),
+          required(:check) => success_check(),
+          optional(:description) => String.t()
+        }
+
   @type t :: %__MODULE__{
           id: String.t(),
           objective: String.t(),
           success_check: success_check(),
           max_steps: pos_integer(),
-          category: category()
+          category: category(),
+          seed_files: [seed_file()],
+          recovery_checks: [recovery_check()]
         }
 
   @doc """
@@ -77,6 +91,12 @@ defmodule Orchid.Autonomy.Benchmark do
       not valid_category?(benchmark.category) ->
         {:error, {:invalid_category, benchmark.category}}
 
+      not valid_seed_files?(benchmark.seed_files) ->
+        {:error, {:invalid_seed_files, benchmark.seed_files}}
+
+      not valid_recovery_checks?(benchmark.recovery_checks) ->
+        {:error, {:invalid_recovery_checks, benchmark.recovery_checks}}
+
       true ->
         {:ok, benchmark}
     end
@@ -93,4 +113,31 @@ defmodule Orchid.Autonomy.Benchmark do
 
   defp valid_success_check?({:predicate, predicate}), do: is_function(predicate, 1)
   defp valid_success_check?(_success_check), do: false
+
+  defp valid_seed_files?(seed_files) when is_list(seed_files) do
+    Enum.all?(seed_files, &valid_seed_file?/1)
+  end
+
+  defp valid_seed_files?(_seed_files), do: false
+
+  defp valid_seed_file?(%{path: path, content: content} = seed_file) do
+    string_present?(path) and is_binary(content) and valid_mode?(Map.get(seed_file, :mode))
+  end
+
+  defp valid_seed_file?(_seed_file), do: false
+
+  defp valid_mode?(nil), do: true
+  defp valid_mode?(mode), do: is_integer(mode) and mode >= 0
+
+  defp valid_recovery_checks?(recovery_checks) when is_list(recovery_checks) do
+    Enum.all?(recovery_checks, &valid_recovery_check?/1)
+  end
+
+  defp valid_recovery_checks?(_recovery_checks), do: false
+
+  defp valid_recovery_check?(%{id: id, check: check}) do
+    string_present?(id) and valid_success_check?(check)
+  end
+
+  defp valid_recovery_check?(_recovery_check), do: false
 end

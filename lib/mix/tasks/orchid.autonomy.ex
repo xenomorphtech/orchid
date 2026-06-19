@@ -75,6 +75,7 @@ defmodule Mix.Tasks.Orchid.Autonomy do
       runs_per_benchmark: runs,
       benchmark_count: length(benchmarks),
       benchmarks: benchmark_reports,
+      categories: category_summaries(benchmark_reports),
       summary: summarize(benchmark_reports)
     }
   end
@@ -114,6 +115,8 @@ defmodule Mix.Tasks.Orchid.Autonomy do
       objective: benchmark.objective,
       max_steps: benchmark.max_steps,
       success_check: encode_success_check(benchmark.success_check),
+      seed_files: Enum.map(benchmark.seed_files, & &1.path),
+      recovery_checks: encode_recovery_checks(benchmark.recovery_checks),
       samples: samples,
       median_score: median_score(samples),
       goal_closure_rate: goal_closure_rate(samples)
@@ -150,6 +153,16 @@ defmodule Mix.Tasks.Orchid.Autonomy do
 
   defp encode_success_check({:predicate, _predicate}), do: %{type: :predicate}
 
+  defp encode_recovery_checks(recovery_checks) do
+    Enum.map(recovery_checks, fn recovery_check ->
+      %{
+        id: recovery_check.id,
+        description: Map.get(recovery_check, :description),
+        check: encode_success_check(recovery_check.check)
+      }
+    end)
+  end
+
   defp median_score(samples) do
     %{
       unattended_depth: median(Enum.map(samples, &get_in(&1, [:score, :unattended_depth]))),
@@ -174,9 +187,56 @@ defmodule Mix.Tasks.Orchid.Autonomy do
         median(Enum.map(benchmark_reports, &get_in(&1, [:median_score, :unattended_depth]))),
       goal_closure_rate:
         average(Enum.map(benchmark_reports, &Map.fetch!(&1, :goal_closure_rate))),
-      recovery_rate:
-        median(Enum.map(benchmark_reports, &get_in(&1, [:median_score, :recovery_rate])))
+      recovery_rate: aggregate_recovery_rate(benchmark_reports),
+      recovery_injected_count: recovery_injected_count(benchmark_reports),
+      recovery_recovered_count: recovery_recovered_count(benchmark_reports)
     }
+  end
+
+  defp category_summaries(benchmark_reports) do
+    benchmark_reports
+    |> Enum.group_by(& &1.category)
+    |> Enum.map(fn {category, reports} ->
+      {category,
+       %{
+         benchmark_count: length(reports),
+         goal_closure_rate: average(Enum.map(reports, &Map.fetch!(&1, :goal_closure_rate))),
+         unattended_depth:
+           median(Enum.map(reports, &get_in(&1, [:median_score, :unattended_depth]))),
+         recovery_rate: aggregate_recovery_rate(reports),
+         recovery_injected_count: recovery_injected_count(reports),
+         recovery_recovered_count: recovery_recovered_count(reports)
+       }}
+    end)
+    |> Map.new()
+  end
+
+  defp aggregate_recovery_rate(benchmark_reports) do
+    injected = recovery_injected_count(benchmark_reports)
+
+    if injected == 0 do
+      0.0
+    else
+      recovery_recovered_count(benchmark_reports) / injected
+    end
+  end
+
+  defp recovery_injected_count(benchmark_reports) do
+    benchmark_reports
+    |> recovery_events()
+    |> Enum.count(&Map.get(&1, :injected, true))
+  end
+
+  defp recovery_recovered_count(benchmark_reports) do
+    benchmark_reports
+    |> recovery_events()
+    |> Enum.count(&(Map.get(&1, :injected, true) and Map.get(&1, :recovered, false)))
+  end
+
+  defp recovery_events(benchmark_reports) do
+    benchmark_reports
+    |> Enum.flat_map(&Map.fetch!(&1, :samples))
+    |> Enum.flat_map(fn sample -> get_in(sample, [:result, :recovered]) || [] end)
   end
 
   defp suite_status(benchmark_reports) do
