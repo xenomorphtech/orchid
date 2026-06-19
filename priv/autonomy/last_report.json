@@ -1,0 +1,105 @@
+{
+  "status": "scaffold",
+  "benchmark_count": 1,
+  "benchmarks": [
+    {
+      "id": "build_cli_wordcount",
+      "category": "development",
+      "objective": "Write a CLI that counts words in a file and passes its own tests.",
+      "max_steps": 40,
+      "success_check": {
+        "command": "cd /workspace && mix test 2>&1 | grep -q '0 failures'",
+        "type": "shell"
+      },
+      "goal_closure_rate": 0.0,
+      "median_score": {
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "samples": [
+        {
+          "status": "scaffold",
+          "run": 1,
+          "result": {
+            "closed": false,
+            "status": "scaffold",
+            "depth": 0,
+            "project_id": null,
+            "agent_id": null,
+            "recovered": [],
+            "steps": [
+              {
+                "index": 0,
+                "status": "not_implemented",
+                "max_steps": 40,
+                "summary": "Runner scaffold only; unattended agent loop wiring is TODO."
+              }
+            ]
+          },
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 0,
+            "goal_closure": false
+          }
+        },
+        {
+          "status": "scaffold",
+          "run": 2,
+          "result": {
+            "closed": false,
+            "status": "scaffold",
+            "depth": 0,
+            "project_id": null,
+            "agent_id": null,
+            "recovered": [],
+            "steps": [
+              {
+                "index": 0,
+                "status": "not_implemented",
+                "max_steps": 40,
+                "summary": "Runner scaffold only; unattended agent loop wiring is TODO."
+              }
+            ]
+          },
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 0,
+            "goal_closure": false
+          }
+        },
+        {
+          "status": "scaffold",
+          "run": 3,
+          "result": {
+            "closed": false,
+            "status": "scaffold",
+            "depth": 0,
+            "project_id": null,
+            "agent_id": null,
+            "recovered": [],
+            "steps": [
+              {
+                "index": 0,
+                "status": "not_implemented",
+                "max_steps": 40,
+                "summary": "Runner scaffold only; unattended agent loop wiring is TODO."
+              }
+            ]
+          },
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 0,
+            "goal_closure": false
+          }
+        }
+      ]
+    }
+  ],
+  "generated_at": "2026-06-19T04:39:27.642627Z",
+  "runs_per_benchmark": 3,
+  "summary": {
+    "goal_closure_rate": 0.0,
+    "recovery_rate": 0.0,
+    "unattended_depth": 0
+  }
+}
