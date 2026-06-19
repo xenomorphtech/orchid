@@ -2,9 +2,9 @@ defmodule Orchid.Autonomy.Scorer do
   @moduledoc """
   Deterministic scorer for autonomy benchmark runs.
 
-  The scorer never calls an LLM. Closure is decided only by deterministic
-  `success_check` results executed against the benchmark sandbox, or by
-  explicitly pure predicates supplied by a benchmark.
+  The scorer never calls an LLM. Closure is decided from the runner's captured
+  deterministic `success_check` result, or by explicitly pure predicates
+  supplied by a benchmark.
   """
 
   alias Orchid.Autonomy.{Benchmark, Runner}
@@ -26,9 +26,15 @@ defmodule Orchid.Autonomy.Scorer do
       when is_list(opts) do
     %{
       unattended_depth: Map.get(run_result, :depth, 0),
-      goal_closure: success_check_passed?(benchmark.success_check, run_result, opts),
+      goal_closure: goal_closure(run_result, benchmark, opts),
       recovery_rate: recovery_rate(Map.get(run_result, :recovered, []))
     }
+  end
+
+  defp goal_closure(%{closed: closed}, _benchmark, _opts) when is_boolean(closed), do: closed
+
+  defp goal_closure(run_result, benchmark, opts) do
+    success_check_passed?(benchmark.success_check, run_result, opts)
   end
 
   @doc """
