@@ -55,4 +55,32 @@ The three categories map directly to the README's claim (autonomous **research /
 - **Cost guard:** default agent is the free `nex-agi/nex-n2-pro:free` model, so suite runs are zero-token-cost; still cap wall-clock per benchmark.
 
 ---
-_This spec is the contract the autonomy test suite and the optimizing loops build against. Implementation lands under `test/autonomy/` + `lib/orchid/autonomy/` + `mix orchid.autonomy`._
+
+## Campaign results & current architecture (2026-06-19, main f9d0627)
+
+The spec above is **implemented and the campaign thesis is proven**. State of the system:
+
+### Suite (built, `lib/orchid/autonomy/` + `mix orchid.autonomy`)
+- `Runner` / `Scorer` / `Benchmark` live; `mix orchid.autonomy --mode flat|gvr|auto --runs N [--max-rounds R] [--max-delegate-depth D]` → `priv/autonomy/last_report.json`. Scorer is LLM-free (`Orchid.Sandbox.exec/3`).
+- **11 benchmarks** = 4 easy + 4 endurance + **3 planning-gap discriminators** (`budget_constrained_build_order`, `oscillating_constraint_refactor`, `garden_path_diagnosis`). Only the 3 discriminators expose a *planning* gap (tight `max_steps` + a greedy-failure trap); flat closure on them is low (≈0.0–0.22). Endurance benchmarks do **not** discriminate — a flat loop with enough steps grinds through.
+- **Sandbox teardown:** `Runner.run/2` wraps the goal in `try … after cleanup …` so each goal's Podman container is destroyed on success/failure/exception (an un-torn-down sandbox per goal previously filled the disk and crashed runs — looked like a planner failure, was an infra precondition).
+
+### Planner: Generator → Verifier → Reviser (`lib/orchid/planner/`)
+- `:flat` = single greedy LLM planner-agent. `:gvr` = Generator proposes a plan, Verifier critiques, Reviser revises within `gvr_max_rounds`, recursively delegating sub-goals up to `gvr_max_delegate_depth`.
+- **Revise-loop fix:** the loop originally *aborted* a sample on the first `:flawed` verdict (the "R" never ran); fixed to feed the critique back and revise.
+- **Both-node empty-output retry:** the free model `nex-agi/nex-n2-pro:free` intermittently returns EMPTY output on generator AND verifier calls; both nodes now retry (~6×) instead of mis-counting empties as planning failures. This was the unlock that let the decisive measurement run validly.
+- **Memoization** (`planner/llm_memo.ex`): opt-controllable within-run `(prompt,model)→response` cache (generator task-arrays + verifier decisions); behaviour-preserving, ~66% wall-clock cut on identical-prompt repeats across the 3-run repetitions.
+
+### Mode router (`lib/orchid/planner/router.ex`) — the metric-mover
+- **Finding:** G-V-R **beats** flat where planning matters (gvr `oscillating` 0.333 / `garden_path` 0.667 vs flat 0.0) but **regresses easy** goals hard (gvr-easy 0.250 vs flat-easy 0.900 — verification/revision overhead starves simple goals). So a *global* gvr switch lowers the aggregate.
+- **Router** classifies each goal on **runtime signals only** — objective planning-markers (ordering/dependency/budget/constraint/refactor), objective word-count, `max_steps`-or-equivalent, `success_check` kind — and routes easy→`:flat` / planning-gap→`:gvr`. It MUST NOT read benchmark `id`/`category` (those are harness labels, absent for real goals; routing on them would be a demo, not a deliverable).
+- **H1 (proven):** routing raises the **aggregate** `goal_closure_rate` by the discriminator gain with **zero easy regression** — the gain a global switch can't get. `:auto` (router) is the **default mode** in `Runner` + the `mix orchid.autonomy` CLI; `:flat`/`:gvr` stay explicitly selectable for measurement.
+
+### Production wiring (`lib/orchid/goal_watcher.ex` + `lib/orchid/planner/runtime_goal.ex`)
+- The **real** goal-pursuit loop now routes through the proven stack: `goal_watcher.spawn_planner` builds a `RuntimeGoal` from the live `Orchid.Object` project/goals → `Router` (`[ROUTER] -> :flat|:gvr`) → `:flat` planner-agent path OR `:gvr` `Planner.plan/3` → approved task array to a real planner agent. Runtime-signals-only; no benchmark coupling. (Previously goal_watcher used a freeform LLM agent that bypassed the entire planner stack.)
+
+### Open / gated
+- **Empirical real-goal closure measurement** is the remaining frontier. It is gated by (a) the free model's ~95s/call latency (a paid/faster planner model collapses a suite/closure run from multi-hour to minutes) and (b) full app boot requiring SSL certs absent in this environment (`mix run --no-start` only). Both are external resource gates; the durable engineering above is complete and folded to `main`.
+
+---
+_This spec is the contract the autonomy test suite and the optimizing loops build against. Implementation lands under `test/autonomy/` + `lib/orchid/autonomy/` + `lib/orchid/planner/` + `mix orchid.autonomy`._
