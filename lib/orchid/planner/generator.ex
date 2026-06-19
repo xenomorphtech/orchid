@@ -90,6 +90,7 @@ defmodule Orchid.Planner.Generator do
   defp user_prompt(objective, completed_tasks, opts) do
     allowed_tools = allowed_tools(opts) |> Enum.join(", ")
     path_note = path_note(opts)
+    revision_note = revision_note(opts)
 
     """
     CURRENT OBJECTIVE:
@@ -99,6 +100,8 @@ defmodule Orchid.Planner.Generator do
     #{inspect(completed_tasks, limit: 50)}
 
     #{path_note}
+
+    #{revision_note}
 
     AVAILABLE ORCHID TOOLS FOR TOOL TASKS:
     #{allowed_tools}
@@ -117,6 +120,62 @@ defmodule Orchid.Planner.Generator do
     """
     |> String.trim()
   end
+
+  defp revision_note(opts) do
+    feedback = Map.get(opts, :revision_feedback, [])
+
+    if is_list(feedback) and feedback != [] do
+      attempt = Map.get(opts, :revision_attempt)
+      budget = Map.get(opts, :revision_budget)
+      attempt_line = revision_attempt_line(attempt, budget)
+
+      """
+      REVISION FEEDBACK:
+      #{attempt_line}
+      The previous candidate plan was not accepted. Produce a revised JSON array
+      that directly fixes every issue below. Do not repeat rejected structure,
+      invalid task types, prose-only answers, or markdown.
+
+      #{Enum.map_join(feedback, "\n\n", &format_revision_feedback/1)}
+      """
+      |> String.trim()
+    else
+      ""
+    end
+  end
+
+  defp revision_attempt_line(attempt, budget)
+       when is_integer(attempt) and is_integer(budget) do
+    "Revision attempt #{attempt} of #{budget}."
+  end
+
+  defp revision_attempt_line(_attempt, _budget), do: "Revision attempt."
+
+  defp format_revision_feedback(%{source: :generator, attempt: attempt, issue: issue}) do
+    """
+    Attempt #{attempt} generator parse/validation miss:
+    #{limit_text(issue, 1_500)}
+    """
+    |> String.trim()
+  end
+
+  defp format_revision_feedback(%{
+         source: :verifier,
+         attempt: attempt,
+         critique: critique,
+         rejected_plan_json: rejected_plan_json
+       }) do
+    """
+    Attempt #{attempt} verifier critique:
+    #{limit_text(critique, 1_500)}
+
+    Rejected task array:
+    #{limit_text(rejected_plan_json, 2_500)}
+    """
+    |> String.trim()
+  end
+
+  defp format_revision_feedback(other), do: inspect(other, limit: 20)
 
   defp path_note(opts) do
     index = Map.get(opts, :path_index)
@@ -144,7 +203,7 @@ defmodule Orchid.Planner.Generator do
       memory: %{}
     }
 
-    case LLM.chat(llm_config(opts), context) do
+    case llm_module(opts).chat(llm_config(opts), context) do
       {:ok, %{content: content}} when is_binary(content) ->
         trimmed = String.trim(content)
 
@@ -157,6 +216,10 @@ defmodule Orchid.Planner.Generator do
       {:error, reason} ->
         {:error, "Generator LLM failed: #{inspect(reason)}"}
     end
+  end
+
+  defp llm_module(opts) do
+    Map.get(opts, :llm_module, LLM)
   end
 
   defp llm_config(opts) do
@@ -176,6 +239,8 @@ defmodule Orchid.Planner.Generator do
       _ -> @default_allowed_tools
     end
   end
+
+  defp normalize_tasks([]), do: {:error, "task array must contain at least one task"}
 
   defp normalize_tasks(tasks) do
     tasks
@@ -258,6 +323,16 @@ defmodule Orchid.Planner.Generator do
   end
 
   defp blank_to_nil(_value), do: nil
+
+  defp limit_text(text, max) when is_binary(text) do
+    if String.length(text) > max do
+      String.slice(text, 0, max) <> "..."
+    else
+      text
+    end
+  end
+
+  defp limit_text(term, max), do: term |> inspect(limit: 20) |> limit_text(max)
 
   defp normalize_opts(opts) when is_list(opts), do: Map.new(opts)
   defp normalize_opts(opts) when is_map(opts), do: opts

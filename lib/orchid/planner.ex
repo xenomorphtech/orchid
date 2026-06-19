@@ -1,9 +1,10 @@
 defmodule Orchid.Planner do
   @moduledoc """
-  Multi-path planning loop (Generator -> Verifier).
+  Multi-path planning loop (Generator -> Verifier -> Reviser).
 
   This module explores several structured candidate task arrays concurrently,
-  verifies each one, and returns the strongest approved plan.
+  verifies each one, revises rejected plans within the iteration budget, and
+  returns the strongest approved plan.
   """
 
   require Logger
@@ -17,6 +18,8 @@ defmodule Orchid.Planner do
     max_iterations: 3,
     max_concurrency: 3
   ]
+
+  @verifier_parse_retries 2
 
   @type task :: Generator.task()
 
@@ -32,10 +35,13 @@ defmodule Orchid.Planner do
   def plan_tasks(objective, base_sandbox, opts \\ []) when is_binary(objective) do
     opts = Keyword.merge(@default_opts, opts)
     num_paths = bounded_int(opts[:num_paths], 3, 1, 8)
-    _max_iterations = bounded_int(opts[:max_iterations], 3, 0, 6)
+    max_iterations = bounded_int(opts[:max_iterations], 3, 1, 12)
     max_concurrency = bounded_int(opts[:max_concurrency], num_paths, 1, 8)
+    opts = Keyword.put(opts, :max_iterations, max_iterations)
 
-    Logger.info("[GVR] generator: proposing #{num_paths} structured candidate plans")
+    Logger.info(
+      "[GVR] generator: proposing #{num_paths} structured candidate plans, up to #{max_iterations} revision attempts each"
+    )
 
     results =
       1..num_paths
@@ -44,7 +50,8 @@ defmodule Orchid.Planner do
           generate_and_verify(objective, base_sandbox, opts, path_index, num_paths)
         end,
         max_concurrency: max_concurrency,
-        timeout: :timer.minutes(10),
+        timeout: path_timeout(max_iterations),
+        on_timeout: :kill_task,
         ordered: true
       )
       |> Enum.map(&normalize_path_result/1)
@@ -66,10 +73,13 @@ defmodule Orchid.Planner do
   end
 
   defp generate_and_verify(objective, base_sandbox, opts, path_index, path_count) do
+    max_iterations = Keyword.fetch!(opts, :max_iterations)
+
     plan_opts =
       opts
       |> Keyword.put(:path_index, path_index)
       |> Keyword.put(:path_count, path_count)
+      |> Keyword.put(:revision_budget, max_iterations)
 
     completed_tasks = Keyword.get(plan_opts, :completed_tasks, [])
 
@@ -77,15 +87,201 @@ defmodule Orchid.Planner do
 
     try do
       verifier_opts = Keyword.put(plan_opts, :overlay, overlay)
-
-      with {:ok, tasks} <- Generator.generate(objective, completed_tasks, plan_opts) do
-        case Verifier.verify(objective, tasks, verifier_opts) do
-          {:approved, reason} -> {:approved, tasks, reason}
-          {:flawed, critique} -> {:flawed, tasks, critique}
-        end
-      end
+      revise_until_approved(objective, completed_tasks, plan_opts, verifier_opts, [], 1)
     after
       Overlay.discard(overlay)
+    end
+  end
+
+  defp revise_until_approved(
+         objective,
+         completed_tasks,
+         plan_opts,
+         verifier_opts,
+         feedback,
+         attempt
+       ) do
+    max_iterations = Keyword.fetch!(plan_opts, :max_iterations)
+    path_index = Keyword.fetch!(plan_opts, :path_index)
+    path_count = Keyword.fetch!(plan_opts, :path_count)
+
+    attempt_opts =
+      plan_opts
+      |> Keyword.put(:revision_attempt, attempt)
+      |> Keyword.put(:revision_feedback, feedback)
+
+    case Generator.generate(objective, completed_tasks, attempt_opts) do
+      {:ok, tasks} ->
+        verify_revision(
+          objective,
+          completed_tasks,
+          plan_opts,
+          verifier_opts,
+          feedback,
+          attempt,
+          tasks
+        )
+
+      {:error, reason} ->
+        Logger.info(
+          "[GVR] generator path #{path_index}/#{path_count} attempt #{attempt}/#{max_iterations}: retryable miss:\n#{truncate(reason, 2_000)}"
+        )
+
+        next_feedback = feedback ++ [generator_feedback(attempt, reason)]
+
+        if retryable_generator_error?(reason) and attempt < max_iterations do
+          revise_until_approved(
+            objective,
+            completed_tasks,
+            plan_opts,
+            verifier_opts,
+            next_feedback,
+            attempt + 1
+          )
+        else
+          {:error, retry_summary(next_feedback)}
+        end
+    end
+  end
+
+  defp verify_revision(
+         objective,
+         completed_tasks,
+         plan_opts,
+         verifier_opts,
+         feedback,
+         attempt,
+         tasks
+       ),
+       do:
+         verify_revision(
+           objective,
+           completed_tasks,
+           plan_opts,
+           verifier_opts,
+           feedback,
+           attempt,
+           tasks,
+           1
+         )
+
+  defp verify_revision(
+         objective,
+         completed_tasks,
+         plan_opts,
+         verifier_opts,
+         feedback,
+         attempt,
+         tasks,
+         verifier_retry
+       ) do
+    max_iterations = Keyword.fetch!(plan_opts, :max_iterations)
+    path_index = Keyword.fetch!(plan_opts, :path_index)
+    path_count = Keyword.fetch!(plan_opts, :path_count)
+
+    case Verifier.verify(objective, tasks, verifier_opts) do
+      {:approved, reason} ->
+        Logger.info(
+          "[GVR] verifier path #{path_index}/#{path_count} attempt #{attempt}/#{max_iterations}: approved:\n#{truncate(reason, 2_000)}"
+        )
+
+        {:approved, tasks, reason}
+
+      {:flawed, critique} ->
+        Logger.info(
+          "[GVR] verifier path #{path_index}/#{path_count} attempt #{attempt}/#{max_iterations}: flawed:\n#{truncate(critique, 2_000)}"
+        )
+
+        next_feedback = feedback ++ [verifier_feedback(attempt, tasks, critique)]
+
+        if attempt < max_iterations do
+          revise_until_approved(
+            objective,
+            completed_tasks,
+            plan_opts,
+            verifier_opts,
+            next_feedback,
+            attempt + 1
+          )
+        else
+          {:flawed, tasks, retry_summary(next_feedback)}
+        end
+
+      {:retry, reason} ->
+        Logger.info(
+          "[GVR] verifier path #{path_index}/#{path_count} attempt #{attempt}/#{max_iterations} parse retry #{verifier_retry}/#{@verifier_parse_retries}:\n#{truncate(reason, 2_000)}"
+        )
+
+        if verifier_retry < @verifier_parse_retries do
+          verify_revision(
+            objective,
+            completed_tasks,
+            plan_opts,
+            verifier_opts,
+            feedback,
+            attempt,
+            tasks,
+            verifier_retry + 1
+          )
+        else
+          next_feedback = feedback ++ [verifier_retry_feedback(attempt, reason)]
+          {:error, retry_summary(next_feedback)}
+        end
+    end
+  end
+
+  defp generator_feedback(attempt, reason) do
+    %{
+      source: :generator,
+      attempt: attempt,
+      issue: truncate(reason, 1_500)
+    }
+  end
+
+  defp verifier_feedback(attempt, tasks, critique) do
+    %{
+      source: :verifier,
+      attempt: attempt,
+      critique: truncate(critique, 1_500),
+      rejected_plan_json: truncate(encode_tasks(tasks), 2_500)
+    }
+  end
+
+  defp verifier_retry_feedback(attempt, reason) do
+    %{
+      source: :verifier_retry,
+      attempt: attempt,
+      issue: truncate(reason, 1_500)
+    }
+  end
+
+  defp retryable_generator_error?(reason) when is_binary(reason) do
+    not String.starts_with?(reason, "Generator LLM failed:")
+  end
+
+  defp retryable_generator_error?(_reason), do: false
+
+  defp retry_summary(feedback) do
+    details =
+      feedback
+      |> Enum.map_join("; ", fn
+        %{source: :generator, attempt: attempt, issue: issue} ->
+          "attempt #{attempt} generator miss: #{truncate(issue, 180)}"
+
+        %{source: :verifier, attempt: attempt, critique: critique} ->
+          "attempt #{attempt} verifier flaw: #{truncate(critique, 180)}"
+
+        %{source: :verifier_retry, attempt: attempt, issue: issue} ->
+          "attempt #{attempt} verifier parse miss: #{truncate(issue, 180)}"
+
+        other ->
+          truncate(inspect(other), 180)
+      end)
+
+    if details == "" do
+      "No approved plan after revision budget."
+    else
+      "No approved plan after revision budget: #{details}"
     end
   end
 
@@ -139,6 +335,14 @@ defmodule Orchid.Planner do
   end
 
   defp bounded_int(_value, default, _min, _max), do: default
+
+  defp path_timeout(max_iterations) do
+    max_iterations
+    |> max(3)
+    |> min(8)
+    |> Kernel.*(4)
+    |> :timer.minutes()
+  end
 
   defp truncate(term, max) do
     text = JSON.render_error(term)

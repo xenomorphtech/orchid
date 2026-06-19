@@ -19,7 +19,7 @@ defmodule Orchid.Planner.Verifier do
     max_tokens: 2_200
   }
 
-  @type decision :: {:approved, String.t()} | {:flawed, String.t()}
+  @type decision :: {:approved, String.t()} | {:flawed, String.t()} | {:retry, String.t()}
 
   @spec critique(String.t(), [Generator.task()], keyword() | map()) :: decision()
   def critique(objective, tasks, opts \\ []) do
@@ -50,15 +50,15 @@ defmodule Orchid.Planner.Verifier do
         case decision_status(decoded) do
           {:ok, :approved} -> {:approved, decision_message(decoded, "reason", raw)}
           {:ok, :flawed} -> {:flawed, decision_message(decoded, "critique", raw)}
-          {:error, reason} -> {:flawed, raw_critique(raw, reason)}
+          {:error, reason} -> {:retry, raw_critique(raw, reason)}
         end
 
       {:error, reason} ->
-        {:flawed, raw_critique(raw, reason)}
+        {:retry, raw_critique(raw, reason)}
     end
   end
 
-  def parse_decision(_raw), do: {:flawed, "Verifier output must be a string"}
+  def parse_decision(_raw), do: {:retry, "Verifier output must be a string"}
 
   defp raw_critique(raw, reason) do
     """
@@ -119,7 +119,7 @@ defmodule Orchid.Planner.Verifier do
       memory: %{}
     }
 
-    case LLM.chat(llm_config(opts), context) do
+    case llm_module(opts).chat(llm_config(opts), context) do
       {:ok, %{content: content}} when is_binary(content) ->
         trimmed = String.trim(content)
 
@@ -132,6 +132,10 @@ defmodule Orchid.Planner.Verifier do
       {:error, reason} ->
         {:error, "Verifier LLM failed: #{JSON.render_error(reason)}"}
     end
+  end
+
+  defp llm_module(opts) do
+    Map.get(opts, :llm_module, LLM)
   end
 
   defp llm_config(opts) do
