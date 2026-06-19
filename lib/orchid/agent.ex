@@ -1305,7 +1305,7 @@ defmodule Orchid.Agent do
   defp do_llm_retry(config, context, callback, attempt, _agent_pid)
        when attempt >= @max_retries do
     if agent_running?(config[:agent_id]) do
-      LLM.chat_stream(config, context, callback)
+      llm_module(config).chat_stream(config, context, callback)
     else
       {:error, :stopped}
     end
@@ -1315,7 +1315,7 @@ defmodule Orchid.Agent do
     if not agent_running?(config[:agent_id]) do
       {:error, :stopped}
     else
-      case LLM.chat_stream(config, context, callback) do
+      case llm_module(config).chat_stream(config, context, callback) do
         {:ok, _} = success ->
           success
 
@@ -1365,6 +1365,10 @@ defmodule Orchid.Agent do
           error
       end
     end
+  end
+
+  defp llm_module(config) do
+    Map.get(config, :llm_module, LLM)
   end
 
   defp build_context(state) do
