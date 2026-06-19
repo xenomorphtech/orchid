@@ -41,7 +41,9 @@ def main():
     ap.add_argument("--flat", required=True)
     ap.add_argument("--gvr", required=True)
     ap.add_argument("--easy-baseline", default=None,
-                    help="optional report whose summary.goal_closure_rate is the easy-goal baseline for the no-regression check")
+                    help="flat-easy report (e.g. last_report.json) — its summary.goal_closure_rate is the easy-goal baseline")
+    ap.add_argument("--gvr-easy", default=None,
+                    help="gvr-easy report (easy_gvr.json) — compared against --easy-baseline for the no-regression check")
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON instead of text")
     args = ap.parse_args()
 
@@ -70,20 +72,37 @@ def main():
     improved = [p for p in per if p["delta"] is not None and p["delta"] > 0]
     regressed = [p for p in per if p["delta"] is not None and p["delta"] < 0]
 
+    # No-easy-regression half: compare gvr easy-goal closure (separate gvr-easy run,
+    # --gvr-easy) against the flat-easy baseline (--easy-baseline, e.g. last_report.json).
+    # H1's second half holds iff gvr does NOT regress the easy goals (gvr_easy >= flat_easy - eps).
+    EPS = 1e-9
     regression_check = None
+    easy_no_regression = None
     if args.easy_baseline:
         try:
-            easy = load(args.easy_baseline)
-            easy_agg = agg(easy)
+            flat_easy = load(args.easy_baseline)
+            flat_easy_agg = agg(flat_easy)
+            gvr_easy_agg = None
+            if args.gvr_easy:
+                gvr_easy_agg = agg(load(args.gvr_easy))
+            if flat_easy_agg is not None and gvr_easy_agg is not None:
+                easy_no_regression = gvr_easy_agg >= flat_easy_agg - EPS
             regression_check = {
-                "easy_baseline_agg": easy_agg,
-                "gvr_agg_on_discriminators": gvr_agg,
-                "note": "compare gvr easy-goal closure (separate easy run) against this baseline; this report is discriminators-only",
+                "flat_easy_agg": flat_easy_agg,
+                "gvr_easy_agg": gvr_easy_agg,
+                "easy_delta": (None if (flat_easy_agg is None or gvr_easy_agg is None)
+                               else round(gvr_easy_agg - flat_easy_agg, 4)),
+                "no_regression": easy_no_regression,
+                "note": ("pass --gvr-easy <report> to compute the no-regression check"
+                         if gvr_easy_agg is None else None),
             }
         except (OSError, json.JSONDecodeError) as e:
             regression_check = {"error": str(e)}
 
-    h1_supported = aggregate_delta > 0 and not regressed
+    # Full H1: aggregate gain on discriminators AND no discriminator regresses AND
+    # (if an easy-regression pair was supplied) no easy-goal regression.
+    h1_supported = (aggregate_delta > 0 and not regressed
+                    and (easy_no_regression is None or easy_no_regression))
 
     result = {
         "flat_aggregate": flat_agg,
