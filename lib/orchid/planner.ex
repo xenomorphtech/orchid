@@ -139,7 +139,9 @@ defmodule Orchid.Planner do
 
   defp bounded_int(_value, default, _min, _max), do: default
 
-  defp truncate(text, max) when is_binary(text) do
+  defp truncate(term, max) do
+    text = render_term(term)
+
     if String.length(text) > max do
       String.slice(text, 0, max) <> "..."
     else
@@ -147,5 +149,19 @@ defmodule Orchid.Planner do
     end
   end
 
-  defp truncate(text, _max), do: to_string(text)
+  defp render_term(term) when is_binary(term), do: term
+  defp render_term(%_{} = term), do: render_struct(term)
+  defp render_term(term), do: inspect(term)
+
+  defp render_struct(%module{} = term) do
+    if function_exported?(module, :message, 1) do
+      try do
+        Exception.message(term)
+      rescue
+        _ -> inspect(term)
+      end
+    else
+      inspect(term)
+    end
+  end
 end
