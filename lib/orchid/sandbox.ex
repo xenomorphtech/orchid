@@ -71,8 +71,21 @@ defmodule Orchid.Sandbox do
 
   def stop(project_id) do
     case Registry.lookup(Orchid.Registry, {:sandbox, project_id}) do
-      [{pid, _}] -> GenServer.stop(pid)
-      [] -> :ok
+      [{pid, _}] ->
+        # The sandbox GenServer may have already died on its own (crash/normal
+        # exit) between the Registry.lookup and here — a TOCTOU race. An
+        # unguarded GenServer.stop/1 on a dead pid raises exit(:noproc), which
+        # previously propagated up through Runner.cleanup/1 and crashed the
+        # whole `mix orchid.autonomy` suite mid-report. Stopping an
+        # already-stopped sandbox must be an idempotent no-op.
+        try do
+          GenServer.stop(pid)
+        catch
+          :exit, _ -> :ok
+        end
+
+      [] ->
+        :ok
     end
   end
 
