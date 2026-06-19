@@ -8,6 +8,7 @@ defmodule Orchid.GoalWatcher do
   use GenServer
   require Logger
   alias Orchid.LLM
+  alias Orchid.Planner.{Router, RuntimeGoal}
 
   @interval :timer.seconds(10)
   @log_file "priv/data/goal_watcher.log"
@@ -217,79 +218,347 @@ defmodule Orchid.GoalWatcher do
     end)
   end
 
+  @doc false
+  def runtime_planner_request(project, pending_goals) do
+    goals = List.wrap(pending_goals)
+    goal_summary = format_goal_summary(goals)
+
+    %{
+      route_input: RuntimeGoal.from_goal_watcher(project, goals),
+      goal_label: RuntimeGoal.goal_label(goals, project.id),
+      planner_objective: planner_kickoff_message(project.name, project.content, goal_summary),
+      goal_summary: goal_summary
+    }
+  end
+
+  @doc false
+  def plan_runtime_goals(project, pending_goals, opts \\ []) when is_list(opts) do
+    request = runtime_planner_request(project, pending_goals)
+    decision = route_runtime_request(request, opts)
+
+    plan_routed_request(project, request, decision, opts)
+  end
+
   defp spawn_planner(project, pending_goals) do
+    request = runtime_planner_request(project, pending_goals)
+    decision = route_runtime_request(request, [])
+
+    case decision.mode do
+      :flat -> spawn_flat_planner(project, pending_goals, request)
+      :gvr -> spawn_gvr_planner(project, pending_goals, request, decision)
+    end
+  end
+
+  defp spawn_flat_planner(project, pending_goals, request) do
     case find_planner_template() do
       nil ->
         log("ERROR: no Planner template found, skipping project \"#{project.name}\"")
 
       planner ->
-        goal_summary = format_goal_summary(pending_goals)
-        system_prompt = planner_system_prompt(planner.content, project.name)
-
-        # Ensure sandbox is running before spawning agent
-        case Orchid.Projects.ensure_sandbox(project.id) do
-          {:ok, _} ->
-            log("sandbox ready for project \"#{project.name}\"")
-
-          {:error, reason} ->
-            log("WARNING: sandbox failed for project \"#{project.name}\": #{inspect(reason)}")
-        end
-
-        config = %{
-          provider: planner.metadata[:provider] || :cli,
-          system_prompt: system_prompt,
-          template_id: planner.id,
-          project_id: project.id
-        }
-
-        config =
-          if planner.metadata[:model],
-            do: Map.put(config, :model, planner.metadata[:model]),
-            else: config
-
-        config =
-          if is_list(planner.metadata[:allowed_tools]),
-            do: Map.put(config, :allowed_tools, planner.metadata[:allowed_tools]),
-            else: config
-
-        config =
-          if planner.metadata[:use_orchid_tools],
-            do: Map.put(config, :use_orchid_tools, true),
-            else: config
+        ensure_planner_sandbox(project)
+        config = planner_agent_config(planner, project, :flat)
 
         case Orchid.Agent.create(config) do
           {:ok, agent_id} ->
-            log("spawned planner #{agent_id} for project \"#{project.name}\"")
+            log("spawned flat planner #{agent_id} for project \"#{project.name}\"")
 
-            # Assign all unassigned goals to this planner
-            for goal <- pending_goals, is_nil(goal.metadata[:agent_id]) do
-              Orchid.Object.update_metadata(goal.id, %{agent_id: agent_id})
-              log("  assigned goal \"#{goal.name}\" [#{goal.id}] -> #{agent_id}")
-            end
-
-            message = planner_kickoff_message(project.name, project.content, goal_summary)
-
-            Task.start(fn ->
-              log("streaming kickoff to planner #{agent_id}...")
-
-              result =
-                Orchid.Agent.stream(agent_id, String.trim(message), fn _chunk -> :ok end)
-
-              case result do
-                {:ok, response} ->
-                  preview = response |> String.slice(0, 200) |> String.replace("\n", " ")
-                  log("planner #{agent_id} responded: #{preview}")
-
-                {:error, reason} ->
-                  log("ERROR: planner #{agent_id} stream failed: #{inspect(reason)}")
-              end
-            end)
+            assign_unassigned_goals(pending_goals, agent_id)
+            stream_planner_message(agent_id, request.planner_objective, "kickoff")
 
             log("sent kickoff message to #{agent_id}")
 
           {:error, reason} ->
             log("ERROR: failed to spawn agent for \"#{project.name}\": #{inspect(reason)}")
         end
+    end
+  end
+
+  defp spawn_gvr_planner(project, pending_goals, request, decision) do
+    case find_planner_template() do
+      nil ->
+        log("ERROR: no Planner template found, skipping project \"#{project.name}\"")
+
+      planner ->
+        ensure_planner_sandbox(project)
+
+        case Orchid.Agent.create(planner_agent_config(planner, project, :gvr)) do
+          {:ok, agent_id} ->
+            log("spawned G-V-R planner #{agent_id} for project \"#{project.name}\"")
+            assign_unassigned_goals(pending_goals, agent_id)
+
+            Task.start(fn ->
+              log("running G-V-R planner for #{agent_id}...")
+
+              opts = [
+                base_sandbox: Orchid.Sandbox.status(project.id),
+                allowed_tools: planner_allowed_tools(planner)
+              ]
+
+              case plan_routed_request(project, request, decision, opts) do
+                {:ok, %{plan: plan}} ->
+                  stream_planner_message(
+                    agent_id,
+                    gvr_kickoff_message(request.planner_objective, plan),
+                    "G-V-R kickoff"
+                  )
+
+                {:error, {:gvr_planner_failed, reason, _context}} ->
+                  handle_gvr_planner_failure(agent_id, pending_goals, reason, request)
+              end
+            end)
+
+            log("started G-V-R planner task for #{agent_id}")
+
+          {:error, reason} ->
+            log(
+              "ERROR: failed to spawn G-V-R planner for \"#{project.name}\": #{inspect(reason)}"
+            )
+        end
+    end
+  end
+
+  defp route_runtime_request(request, opts) do
+    case configured_planner_mode(opts) do
+      :auto ->
+        Router.route(request.route_input, request.goal_label)
+
+      mode when mode in [:flat, :gvr] ->
+        decision = Router.classify(request.route_input)
+        signal = "#{decision.signal}; selected_mode=#{mode}"
+        decision = %{decision | mode: mode, signal: signal}
+        Router.log_decision(request.goal_label, decision)
+        decision
+    end
+  end
+
+  defp plan_routed_request(_project, request, %{mode: :flat} = decision, _opts) do
+    {:ok,
+     %{
+       mode: :flat,
+       decision: decision,
+       route_input: request.route_input,
+       planner_objective: request.planner_objective,
+       plan: nil
+     }}
+  end
+
+  defp plan_routed_request(project, request, %{mode: :gvr} = decision, opts) do
+    planner_opts = gvr_planner_opts(project, opts)
+    planner_fun = Keyword.get(opts, :planner_fun, &Orchid.Planner.plan/3)
+
+    case planner_fun.(request.planner_objective, Keyword.get(opts, :base_sandbox), planner_opts) do
+      {:ok, plan} ->
+        {:ok,
+         %{
+           mode: :gvr,
+           decision: decision,
+           route_input: request.route_input,
+           planner_objective: request.planner_objective,
+           planner_opts: planner_opts,
+           plan: plan
+         }}
+
+      {:error, reason} ->
+        {:error,
+         {:gvr_planner_failed, reason,
+          %{mode: :gvr, decision: decision, route_input: request.route_input}}}
+    end
+  end
+
+  defp configured_planner_mode(opts) do
+    opts
+    |> Keyword.get_lazy(:mode, fn ->
+      Application.get_env(:orchid, :goal_watcher_planner_mode) ||
+        System.get_env("ORCHID_GOAL_WATCHER_PLANNER_MODE") ||
+        :auto
+    end)
+    |> normalize_planner_mode()
+  end
+
+  defp normalize_planner_mode(mode) when mode in [:auto, :flat, :gvr], do: mode
+
+  defp normalize_planner_mode(mode) when is_binary(mode) do
+    case mode |> String.trim() |> String.downcase() do
+      "auto" -> :auto
+      "flat" -> :flat
+      "gvr" -> :gvr
+      _ -> :auto
+    end
+  end
+
+  defp normalize_planner_mode(_mode), do: :auto
+
+  defp ensure_planner_sandbox(project) do
+    case Orchid.Projects.ensure_sandbox(project.id) do
+      {:ok, _} ->
+        log("sandbox ready for project \"#{project.name}\"")
+
+      {:error, reason} ->
+        log("WARNING: sandbox failed for project \"#{project.name}\": #{inspect(reason)}")
+    end
+  end
+
+  defp planner_agent_config(planner, project, mode) do
+    config = %{
+      provider: planner.metadata[:provider] || :cli,
+      system_prompt: planner_system_prompt(planner.content, project.name),
+      template_id: planner.id,
+      project_id: project.id,
+      planner_mode: mode
+    }
+
+    config =
+      if planner.metadata[:model],
+        do: Map.put(config, :model, planner.metadata[:model]),
+        else: config
+
+    config =
+      if is_list(planner.metadata[:allowed_tools]),
+        do: Map.put(config, :allowed_tools, planner.metadata[:allowed_tools]),
+        else: config
+
+    config =
+      if planner.metadata[:use_orchid_tools],
+        do: Map.put(config, :use_orchid_tools, true),
+        else: config
+
+    if mode == :gvr do
+      config
+      |> Map.put(:provider, :openrouter)
+      |> Map.put(:model, :nex_n2_pro)
+    else
+      config
+    end
+  end
+
+  defp planner_allowed_tools(planner) do
+    case planner.metadata[:allowed_tools] do
+      tools when is_list(tools) and tools != [] -> tools
+      _ -> nil
+    end
+  end
+
+  defp assign_unassigned_goals(pending_goals, agent_id) do
+    for goal <- pending_goals, is_nil(goal.metadata[:agent_id]) do
+      Orchid.Object.update_metadata(goal.id, %{agent_id: agent_id})
+      log("  assigned goal \"#{goal.name}\" [#{goal.id}] -> #{agent_id}")
+    end
+  end
+
+  defp stream_planner_message(agent_id, message, label) do
+    Task.start(fn ->
+      log("streaming #{label} to planner #{agent_id}...")
+
+      result =
+        Orchid.Agent.stream(agent_id, String.trim(message), fn _chunk -> :ok end)
+
+      case result do
+        {:ok, response} ->
+          preview = response |> String.slice(0, 200) |> String.replace("\n", " ")
+          log("planner #{agent_id} responded: #{preview}")
+
+        {:error, reason} ->
+          log("ERROR: planner #{agent_id} stream failed: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp gvr_kickoff_message(runtime_snapshot, plan) do
+    """
+    G-V-R approved task array:
+
+    #{plan}
+
+    Use this approved plan to drive the current objectives. First call `goal_list`
+    to confirm live state, then execute the plan with the available Orchid tools.
+
+    Runtime snapshot used for planning:
+    #{runtime_snapshot}
+    """
+    |> String.trim()
+  end
+
+  defp handle_gvr_planner_failure(agent_id, pending_goals, reason, request) do
+    log("ERROR: G-V-R planner #{agent_id} failed: #{inspect(reason)}")
+
+    if gvr_flat_fallback?() do
+      fallback =
+        """
+        G-V-R planning failed before producing an approved task array:
+        #{inspect(reason)}
+
+        Continue in flat planner mode using the runtime snapshot below.
+
+        #{request.planner_objective}
+        """
+
+      stream_planner_message(agent_id, fallback, "G-V-R failure fallback")
+    else
+      for goal <- pending_goals do
+        Orchid.Object.update_metadata(goal.id, %{
+          agent_id: nil,
+          last_error: "G-V-R planner failed: #{inspect(reason)}"
+        })
+      end
+
+      Orchid.Agent.stop(agent_id)
+    end
+  end
+
+  defp gvr_flat_fallback? do
+    truthy?(
+      Application.get_env(:orchid, :goal_watcher_gvr_flat_fallback) ||
+        System.get_env("ORCHID_GOAL_WATCHER_GVR_FLAT_FALLBACK")
+    )
+  end
+
+  defp truthy?(value) when value in [true, "true", "1", 1, true], do: true
+  defp truthy?(_value), do: false
+
+  defp gvr_planner_opts(project, opts) do
+    [
+      num_paths: Keyword.get(opts, :gvr_num_paths, Keyword.get(opts, :num_paths, 1)),
+      max_iterations:
+        Keyword.get(opts, :gvr_max_iterations, Keyword.get(opts, :max_iterations, 1)),
+      max_concurrency:
+        Keyword.get(opts, :gvr_max_concurrency, Keyword.get(opts, :max_concurrency, 1)),
+      llm_memoize: Keyword.get(opts, :llm_memoize, true),
+      project_id: project.id,
+      completed_tasks: Keyword.get(opts, :completed_tasks, []),
+      workspace_context:
+        Keyword.get_lazy(opts, :workspace_context, fn -> planner_workspace_context(project.id) end),
+      llm_config:
+        Keyword.get(opts, :llm_config, %{
+          provider: :openrouter,
+          model: :nex_n2_pro
+        })
+    ]
+    |> maybe_put_option(:allowed_tools, Keyword.get(opts, :allowed_tools))
+    |> maybe_put_option(:llm_module, Keyword.get(opts, :llm_module))
+  end
+
+  defp maybe_put_option(opts, _key, nil), do: opts
+  defp maybe_put_option(opts, key, value), do: Keyword.put(opts, key, value)
+
+  defp planner_workspace_context(project_id) do
+    root = Orchid.Project.files_path(project_id)
+
+    files =
+      if File.dir?(root) do
+        root
+        |> Path.join("**/*")
+        |> Path.wildcard(match_dot: true)
+        |> Enum.filter(&File.regular?/1)
+        |> Enum.take(80)
+        |> Enum.map(&Path.relative_to(&1, root))
+      else
+        []
+      end
+
+    if files == [] do
+      "(workspace appears empty)"
+    else
+      Enum.join(files, "\n")
     end
   end
 
