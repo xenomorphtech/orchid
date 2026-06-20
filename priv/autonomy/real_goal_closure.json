@@ -1,0 +1,224 @@
+{
+  "closed_count": 3,
+  "criteria": {
+    "all_success_checks_external": "true",
+    "at_least_1_closed_with_zero_nudges": "true",
+    "ran_all_3": "true"
+  },
+  "data_dir": "/tmp/orchid-real-goal-closure-2504",
+  "duration_ms": 510891,
+  "generated_at": "2026-06-20T07:38:00.194819Z",
+  "goals": [
+    {
+      "active_agents": [
+        {
+          "id": "YilhA8ZRiHk",
+          "last_assistant_message": "",
+          "model": "nex_n2_pro",
+          "planner_mode": "flat",
+          "provider": "openrouter",
+          "status": "{:executing_tool, \"goal_read\"}",
+          "use_orchid_tools": "true"
+        },
+        {
+          "id": "ql9vsblw9ME",
+          "last_assistant_message": "",
+          "model": "nex_n2_pro",
+          "planner_mode": "nil",
+          "provider": "openrouter",
+          "status": "{:executing_tool, \"shell\"}",
+          "use_orchid_tools": "false"
+        }
+      ],
+      "blocker": "External success check passed before parent goal status completed.",
+      "closed": "true",
+      "closed_by_status": "false",
+      "duration_ms": 175961,
+      "failure_mode": "nil",
+      "goal_id": "2liDpZ9EG4R-cRSi",
+      "goals": [
+        {
+          "agent_id": "ql9vsblw9ME",
+          "completion_summary": "nil",
+          "id": "2KJq7e_ncAj8pjbt",
+          "last_error": "nil",
+          "name": "Create alpha marker closure file",
+          "parent_goal_id": "2liDpZ9EG4R-cRSi",
+          "report": "nil",
+          "status": "pending",
+          "task_outcome": "nil"
+        },
+        {
+          "agent_id": "YilhA8ZRiHk",
+          "completion_summary": "nil",
+          "id": "2liDpZ9EG4R-cRSi",
+          "last_error": "nil",
+          "name": "Close alpha marker file",
+          "parent_goal_id": "nil",
+          "report": "nil",
+          "status": "pending",
+          "task_outcome": "nil"
+        }
+      ],
+      "id": "alpha_marker_file",
+      "model_calls": 9,
+      "nudges": 0,
+      "project_id": "8REpuwDO7L24w8jr",
+      "reliability_failure": "false",
+      "route": {
+        "goal_label": "2liDpZ9EG4R-cRSi",
+        "mode": "flat",
+        "route_input_matches_runtime_goal": "true",
+        "signal": "objective_markers=none; objective_words=107; max_steps=8; success_check=shell"
+      },
+      "status": "success_fact_reached",
+      "success_check": {
+        "command": "cd /workspace && test -f notes/closure.txt && grep -qx 'orchid-real-goal-alpha' notes/closure.txt",
+        "output": "",
+        "passed": "true"
+      },
+      "watcher_checks": 1,
+      "workspace": "/tmp/orchid-real-goal-closure-2504/projects/8REpuwDO7L24w8jr/files"
+    },
+    {
+      "active_agents": [
+        {
+          "id": "-g2Ybqrtd7Y",
+          "last_assistant_message": "",
+          "model": "nex_n2_pro",
+          "planner_mode": "flat",
+          "provider": "openrouter",
+          "status": "{:executing_tool, \"task_report_result\"}",
+          "use_orchid_tools": "true"
+        }
+      ],
+      "blocker": "nil",
+      "closed": "true",
+      "closed_by_status": "true",
+      "duration_ms": 126090,
+      "failure_mode": "nil",
+      "goal_id": "nulyXWT-evzi0JA8",
+      "goals": [
+        {
+          "agent_id": "6dHPlhdwSSY",
+          "completion_summary": "Created executable POSIX sh answer script at /workspace/bin/answer.sh and verified it exits 0.",
+          "id": "WsXZzDTeVc_mRjPn",
+          "last_error": "nil",
+          "name": "Create executable bravo answer script",
+          "parent_goal_id": "nulyXWT-evzi0JA8",
+          "report": "Created /workspace/bin/answer.sh as a POSIX sh script that prints exactly `bravo-42` to stdout.\n\nVerification command run:\ntest -x /workspace/bin/answer.sh && test \"$(/workspace/bin/answer.sh)\" = \"bravo-42\"; status=$?; printf 'status=%s\\n' \"$status\"; exit \"$status\"\n\nOutput:\nstatus=0",
+          "status": "completed",
+          "task_outcome": "success"
+        },
+        {
+          "agent_id": "-g2Ybqrtd7Y",
+          "completion_summary": "Child goal WsXZzDTeVc_mRjPn created executable /workspace/bin/answer.sh; verification command exited status=0.",
+          "id": "nulyXWT-evzi0JA8",
+          "last_error": "nil",
+          "name": "Close bravo executable script",
+          "parent_goal_id": "nil",
+          "report": "Child goal WsXZzDTeVc_mRjPn completed successfully. It created /workspace/bin/answer.sh and ran: `test -x /workspace/bin/answer.sh && test \"$(/workspace/bin/answer.sh)\" = \"bravo-42\"; status=$?; printf 'status=%s\\n' \"$status\"; exit \"$status\"`, which produced `status=0`.",
+          "status": "completed",
+          "task_outcome": "success"
+        }
+      ],
+      "id": "bravo_executable_script",
+      "model_calls": 11,
+      "nudges": 0,
+      "project_id": "t7kr4lg4uxWHaEke",
+      "reliability_failure": "false",
+      "route": {
+        "goal_label": "nulyXWT-evzi0JA8",
+        "mode": "flat",
+        "route_input_matches_runtime_goal": "true",
+        "signal": "objective_markers=none; objective_words=117; max_steps=8; success_check=shell"
+      },
+      "status": "ok",
+      "success_check": {
+        "command": "cd /workspace && test -x bin/answer.sh && test \"$(bin/answer.sh)\" = \"bravo-42\"",
+        "output": "",
+        "passed": "true"
+      },
+      "watcher_checks": 1,
+      "workspace": "/tmp/orchid-real-goal-closure-2504/projects/t7kr4lg4uxWHaEke/files"
+    },
+    {
+      "active_agents": [
+        {
+          "id": "me5a6jPEGNE",
+          "last_assistant_message": "",
+          "model": "nex_n2_pro",
+          "planner_mode": "flat",
+          "provider": "openrouter",
+          "status": "{:executing_tool, \"goal_list\"}",
+          "use_orchid_tools": "true"
+        },
+        {
+          "id": "pe42-GTKjaU",
+          "last_assistant_message": "",
+          "model": "nex_n2_pro",
+          "planner_mode": "nil",
+          "provider": "openrouter",
+          "status": "{:executing_tool, \"task_report_result\"}",
+          "use_orchid_tools": "false"
+        }
+      ],
+      "blocker": "nil",
+      "closed": "true",
+      "closed_by_status": "true",
+      "duration_ms": 208764,
+      "failure_mode": "nil",
+      "goal_id": "wPHAq4m4d-Ftvqy5",
+      "goals": [
+        {
+          "agent_id": "pe42-GTKjaU",
+          "completion_summary": "Closed status file and verified grep match.",
+          "id": "uzPsHfvK6QSfB9h2",
+          "last_error": "nil",
+          "name": "Close charlie status file with Shell Operator",
+          "parent_goal_id": "wPHAq4m4d-Ftvqy5",
+          "report": "Edited /workspace/data/status.txt to contain exactly one line: state=closed. The initial non-sudo edit failed with permission denied, so the file was updated with sudo. Evidence: `grep -qx 'state=closed' /workspace/data/status.txt` exited successfully; captured output was `grep_exit_status=0`.",
+          "status": "completed",
+          "task_outcome": "success"
+        },
+        {
+          "agent_id": "me5a6jPEGNE",
+          "completion_summary": "Parent goal completed: child Shell Operator goal uzPsHfvK6QSfB9h2 closed /workspace/data/status.txt and grep verification exited 0.",
+          "id": "wPHAq4m4d-Ftvqy5",
+          "last_error": "nil",
+          "name": "Close charlie status file",
+          "parent_goal_id": "nil",
+          "report": "Child goal uzPsHfvK6QSfB9h2 completed successfully. It edited /workspace/data/status.txt to contain exactly one line: state=closed, then ran `grep -qx 'state=closed' /workspace/data/status.txt`. The grep result was exit status 0. I independently verified /workspace/data/status.txt contains exactly `state=closed`.",
+          "status": "completed",
+          "task_outcome": "success"
+        }
+      ],
+      "id": "charlie_status_json",
+      "model_calls": 17,
+      "nudges": 0,
+      "project_id": "0orqN1o_QXfuqrVr",
+      "reliability_failure": "false",
+      "route": {
+        "goal_label": "wPHAq4m4d-Ftvqy5",
+        "mode": "flat",
+        "route_input_matches_runtime_goal": "true",
+        "signal": "objective_markers=none; objective_words=108; max_steps=8; success_check=shell"
+      },
+      "status": "ok",
+      "success_check": {
+        "command": "cd /workspace && test -f data/status.txt && grep -qx 'state=closed' data/status.txt",
+        "output": "",
+        "passed": "true"
+      },
+      "watcher_checks": 1,
+      "workspace": "/tmp/orchid-real-goal-closure-2504/projects/0orqN1o_QXfuqrVr/files"
+    }
+  ],
+  "harness": "Mix.Tasks.Orchid.RealGoalClosure",
+  "harness_path": "lib/mix/tasks/orchid.real_goal_closure.ex",
+  "model": "openrouter/nex-agi/nex-n2-pro:free",
+  "n_goals": 3,
+  "product_entry": "Orchid.GoalWatcher",
+  "route_contract": "GoalWatcher.runtime_planner_request -> RuntimeGoal.from_goal_watcher -> Router -> planner",
+  "runner_substrate": "durable per-project sandbox via Orchid.Projects.ensure_sandbox"
+}
