@@ -1,0 +1,455 @@
+{
+  "recovery_rate": 1.0,
+  "baseline_orphaned_containers": [
+    "orchid-project-4xm3ECJsPZFNUV2i",
+    "orchid-project-_Ptb-WimOJkzWZsA",
+    "orchid-project-wTXmClzD0FHV6t5h",
+    "orchid-project-x-4heJbeS-8eSB5z"
+  ],
+  "baseline_orphaned_count": 4,
+  "closed_count": 20,
+  "container_prefix": "orchid-project-",
+  "criteria": {
+    "global_orphaned_count_zero": false,
+    "harness_created_orphaned_count_zero": true,
+    "n_goals_at_least_20": true,
+    "recovery_faults_at_least_3": true,
+    "recovery_rate_at_least_0_9": true
+  },
+  "generated_at": "2026-06-20T06:52:34.075736Z",
+  "harness": "Mix.Tasks.Orchid.RunnerDurability",
+  "harness_created_orphaned_containers": [],
+  "harness_created_orphaned_count": 0,
+  "n_goals": 20,
+  "orphaned_containers": [
+    "orchid-project-4xm3ECJsPZFNUV2i",
+    "orchid-project-_Ptb-WimOJkzWZsA",
+    "orchid-project-wTXmClzD0FHV6t5h",
+    "orchid-project-x-4heJbeS-8eSB5z"
+  ],
+  "orphaned_count": 4,
+  "recovery_injected_count": 3,
+  "recovery_recovered_count": 3,
+  "requested_faults": 3,
+  "samples": [
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 1,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 1.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-FboV8THwsYCtOH7X",
+      "benchmark_id": "runner_durability_1",
+      "duration_ms": 16270,
+      "injected": true,
+      "recovery_events": [
+        {
+          "id": "transient_exec_fault",
+          "status": "recovered",
+          "check": "shell: cd /workspace &&\nif test -f faults/recovery; then rm -f faults/recovery; exit 1; fi &&\ntest -f ready.txt &&\ngrep -q '^status=ready$' ready.txt\n",
+          "description": "A seeded shell marker makes the first recovery check fail, then retry cleanly.",
+          "injected": true,
+          "recovered": true,
+          "initial_passed": false,
+          "final_passed": true
+        }
+      ],
+      "runner_mode": "gvr",
+      "project_id": "FboV8THwsYCtOH7X",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 2,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 1.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-Ra1tFf4HEKDB_Fp7",
+      "benchmark_id": "runner_durability_2",
+      "duration_ms": 17491,
+      "injected": true,
+      "recovery_events": [
+        {
+          "id": "transient_exec_fault",
+          "status": "recovered",
+          "check": "shell: cd /workspace &&\nif test -f faults/recovery; then rm -f faults/recovery; exit 1; fi &&\ntest -f ready.txt &&\ngrep -q '^status=ready$' ready.txt\n",
+          "description": "A seeded shell marker makes the first recovery check fail, then retry cleanly.",
+          "injected": true,
+          "recovered": true,
+          "initial_passed": false,
+          "final_passed": true
+        }
+      ],
+      "runner_mode": "gvr",
+      "project_id": "Ra1tFf4HEKDB_Fp7",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 3,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 1.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-AcjVflbc_nJG_KOP",
+      "benchmark_id": "runner_durability_3",
+      "duration_ms": 17687,
+      "injected": true,
+      "recovery_events": [
+        {
+          "id": "transient_exec_fault",
+          "status": "recovered",
+          "check": "shell: cd /workspace &&\nif test -f faults/recovery; then rm -f faults/recovery; exit 1; fi &&\ntest -f ready.txt &&\ngrep -q '^status=ready$' ready.txt\n",
+          "description": "A seeded shell marker makes the first recovery check fail, then retry cleanly.",
+          "injected": true,
+          "recovered": true,
+          "initial_passed": false,
+          "final_passed": true
+        }
+      ],
+      "runner_mode": "gvr",
+      "project_id": "AcjVflbc_nJG_KOP",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 4,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-CAArsc31oBXZY9-f",
+      "benchmark_id": "runner_durability_4",
+      "duration_ms": 17542,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "CAArsc31oBXZY9-f",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 5,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-SJC7MftInaJzOM55",
+      "benchmark_id": "runner_durability_5",
+      "duration_ms": 17606,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "SJC7MftInaJzOM55",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 6,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-CgHhLe-JTT9p0D8O",
+      "benchmark_id": "runner_durability_6",
+      "duration_ms": 17239,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "CgHhLe-JTT9p0D8O",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 7,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-GJxLux0CL0672N6_",
+      "benchmark_id": "runner_durability_7",
+      "duration_ms": 17562,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "GJxLux0CL0672N6_",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 8,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-2jMJlPi0RTdeDYmk",
+      "benchmark_id": "runner_durability_8",
+      "duration_ms": 17146,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "2jMJlPi0RTdeDYmk",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 9,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-XTnY7rr-Fi-T4mwH",
+      "benchmark_id": "runner_durability_9",
+      "duration_ms": 17124,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "XTnY7rr-Fi-T4mwH",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 10,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-H9mrQIs_O0V2PasT",
+      "benchmark_id": "runner_durability_10",
+      "duration_ms": 16967,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "H9mrQIs_O0V2PasT",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 11,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-fvTVY1_ucmEq7nn4",
+      "benchmark_id": "runner_durability_11",
+      "duration_ms": 17109,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "fvTVY1_ucmEq7nn4",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 12,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-V-ZYDxjNUSlY_cWA",
+      "benchmark_id": "runner_durability_12",
+      "duration_ms": 16997,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "V-ZYDxjNUSlY_cWA",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 13,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-jpTtls642Mwuz3UD",
+      "benchmark_id": "runner_durability_13",
+      "duration_ms": 17199,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "jpTtls642Mwuz3UD",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 14,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-Wsh5dAceFbDN_Qif",
+      "benchmark_id": "runner_durability_14",
+      "duration_ms": 17477,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "Wsh5dAceFbDN_Qif",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 15,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-_WfrMCfoINGp5eRs",
+      "benchmark_id": "runner_durability_15",
+      "duration_ms": 17359,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "_WfrMCfoINGp5eRs",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 16,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-NL1h0pOBZ0GYrp-8",
+      "benchmark_id": "runner_durability_16",
+      "duration_ms": 17617,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "NL1h0pOBZ0GYrp-8",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 17,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-yQoXmQbUiTK4VPK1",
+      "benchmark_id": "runner_durability_17",
+      "duration_ms": 17083,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "yQoXmQbUiTK4VPK1",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 18,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project--K-vZ0_y_SSbTRVx",
+      "benchmark_id": "runner_durability_18",
+      "duration_ms": 17186,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "-K-vZ0_y_SSbTRVx",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 19,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-dBbRuczv93KMIubb",
+      "benchmark_id": "runner_durability_19",
+      "duration_ms": 17133,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "dBbRuczv93KMIubb",
+      "runner_status": "closed"
+    },
+    {
+      "closed": true,
+      "status": "ok",
+      "run": 20,
+      "depth": 0,
+      "score": {
+        "goal_closure": true,
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "container_name": "orchid-project-JKH6V4pnbeOce1jH",
+      "benchmark_id": "runner_durability_20",
+      "duration_ms": 17253,
+      "injected": false,
+      "recovery_events": [],
+      "runner_mode": "gvr",
+      "project_id": "JKH6V4pnbeOce1jH",
+      "runner_status": "closed"
+    }
+  ],
+  "score": {
+    "goal_closure": true,
+    "recovery_rate": 1.0,
+    "unattended_depth": 0.0
+  },
+  "successful_runs": 20
+}
