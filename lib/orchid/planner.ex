@@ -72,25 +72,28 @@ defmodule Orchid.Planner do
       end)
 
     best_effort =
-      Enum.flat_map(results, fn
-        {:flawed, tasks, critique} when is_list(tasks) and tasks != [] ->
-          [{:flawed, tasks, critique}]
+      results
+      |> Enum.with_index(1)
+      |> Enum.flat_map(fn
+        {{:flawed, tasks, critique}, index} when is_list(tasks) and tasks != [] ->
+          [{:flawed, tasks, critique, index}]
 
-        {:unverified, tasks, reason} when is_list(tasks) and tasks != [] ->
-          [{:unverified, tasks, reason}]
+        {{:unverified, tasks, reason}, index} when is_list(tasks) and tasks != [] ->
+          [{:unverified, tasks, reason, index}]
 
         _ ->
           []
       end)
+      |> Enum.sort_by(&best_effort_score/1, :desc)
 
     case {approved, terminal, best_effort} do
       {[], [reason | _rest], _best_effort} ->
         Logger.info("[GVR] generator: terminal empty task array: #{truncate(reason, 240)}")
         {:ok, []}
 
-      {[], [], [{status, tasks, reason} | _rest]} ->
+      {[], [], [{status, tasks, reason, path_index} | _rest]} ->
         Logger.info(
-          "[GVR] verifier: executing best-effort #{best_effort_label(status)} plan with no approved path: #{truncate(reason, 240)}"
+          "[GVR] verifier: executing best-effort #{best_effort_label(status)} plan from path #{path_index} with no approved path: #{truncate(reason, 240)}"
         )
 
         {:ok, tasks}
@@ -389,6 +392,54 @@ defmodule Orchid.Planner do
 
   defp best_effort_label(:flawed), do: "flawed/unapproved"
   defp best_effort_label(:unverified), do: "unverified/unapproved"
+
+  defp best_effort_score({status, tasks, reason, index}) do
+    {
+      best_effort_status_score(status),
+      concrete_task_score(tasks),
+      tool_task_count(tasks),
+      -delegate_task_count(tasks),
+      -length(tasks),
+      -critique_penalty(reason),
+      -index
+    }
+  end
+
+  defp best_effort_status_score(:flawed), do: 2
+  defp best_effort_status_score(:unverified), do: 1
+  defp best_effort_status_score(_status), do: 0
+
+  defp concrete_task_score(tasks) do
+    Enum.reduce(tasks, 0, fn
+      %{type: :tool, tool: tool, args: args, objective: objective}, score
+      when is_binary(tool) and is_map(args) and is_binary(objective) ->
+        score + 4
+
+      %{type: :tool}, score ->
+        score + 2
+
+      %{type: :delegate, objective: objective}, score when is_binary(objective) ->
+        score + 1
+
+      _task, score ->
+        score
+    end)
+  end
+
+  defp tool_task_count(tasks), do: Enum.count(tasks, &(&1[:type] == :tool))
+  defp delegate_task_count(tasks), do: Enum.count(tasks, &(&1[:type] == :delegate))
+
+  defp critique_penalty(reason) do
+    reason
+    |> truncate(2_000)
+    |> String.downcase()
+    |> then(fn text ->
+      Enum.count(
+        ~w(invalid missing guessed unsafe vague placeholder impossible),
+        &String.contains?(text, &1)
+      )
+    end)
+  end
 
   defp rejected_summary(results) do
     details =
