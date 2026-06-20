@@ -255,8 +255,19 @@ defmodule Orchid.Agent do
         state
       end
 
-    Logger.info(
+    start_message =
       "Agent #{id} started, project=#{inspect(state.project_id)}, mode=#{state.execution_mode}, provider=#{config[:provider]}, model=#{config[:model]}"
+
+    Logger.info(start_message)
+
+    Orchid.EventLog.info(:agent, start_message,
+      project_id: state.project_id,
+      agent_id: id,
+      metadata: %{
+        mode: state.execution_mode,
+        provider: config[:provider],
+        model: config[:model]
+      }
     )
 
     put_runtime(id, %{lifecycle: :running, worker_pid: nil})

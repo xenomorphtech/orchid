@@ -142,7 +142,7 @@ defmodule Orchid.LLM.Codex do
 
   defp exec(command, args, opts) do
     try do
-      case System.cmd(command, args, opts) do
+      case Orchid.OS.Command.run(command, args, opts) do
         {output, 0} ->
           {:ok, output}
 
@@ -150,7 +150,7 @@ defmodule Orchid.LLM.Codex do
           {:error, format_command_error(command, code, output)}
       end
     rescue
-      error in ErlangError ->
+      error in [ArgumentError, ErlangError] ->
         {:error, Exception.message(error)}
     end
   end

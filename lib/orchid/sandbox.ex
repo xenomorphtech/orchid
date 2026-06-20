@@ -378,7 +378,7 @@ defmodule Orchid.Sandbox do
         |> Path.dirname()
 
       _ ->
-        case System.cmd("sh", ["-c", "readlink -f #{escape(codex_bin_path)}"],
+        case Orchid.OS.Command.run("sh", ["-c", "readlink -f #{escape(codex_bin_path)}"],
                stderr_to_stdout: true
              ) do
           {resolved, 0} ->
@@ -479,7 +479,7 @@ defmodule Orchid.Sandbox do
   end
 
   defp try_overlay_container(state) do
-    System.cmd("podman", ["rm", "-f", state.container_name], stderr_to_stdout: true)
+    Orchid.OS.Command.run("podman", ["rm", "-f", state.container_name], stderr_to_stdout: true)
 
     args =
       [
@@ -511,14 +511,17 @@ defmodule Orchid.Sandbox do
             "exec sleep infinity"
         ]
 
-    case System.cmd("podman", args, stderr_to_stdout: true) do
+    case Orchid.OS.Command.run("podman", args, stderr_to_stdout: true) do
       {_output, 0} ->
         case wait_for_container(state.container_name, 10) do
           :running ->
             {:ok, %{state | status: :ready, overlay_method: :overlay}}
 
           :exited ->
-            System.cmd("podman", ["rm", "-f", state.container_name], stderr_to_stdout: true)
+            Orchid.OS.Command.run("podman", ["rm", "-f", state.container_name],
+              stderr_to_stdout: true
+            )
+
             {:error, "container exited (overlay mount likely failed)"}
         end
 
@@ -528,7 +531,7 @@ defmodule Orchid.Sandbox do
   end
 
   defp try_fallback_container(state) do
-    System.cmd("podman", ["rm", "-f", state.container_name], stderr_to_stdout: true)
+    Orchid.OS.Command.run("podman", ["rm", "-f", state.container_name], stderr_to_stdout: true)
 
     args =
       [
@@ -557,14 +560,17 @@ defmodule Orchid.Sandbox do
             "exec sleep infinity"
         ]
 
-    case System.cmd("podman", args, stderr_to_stdout: true) do
+    case Orchid.OS.Command.run("podman", args, stderr_to_stdout: true) do
       {_output, 0} ->
         case wait_for_container(state.container_name, 10) do
           :running ->
             {:ok, %{state | status: :ready, overlay_method: :union}}
 
           :exited ->
-            System.cmd("podman", ["rm", "-f", state.container_name], stderr_to_stdout: true)
+            Orchid.OS.Command.run("podman", ["rm", "-f", state.container_name],
+              stderr_to_stdout: true
+            )
+
             {:error, "container exited (fallback mode startup failed)"}
         end
 
@@ -576,7 +582,9 @@ defmodule Orchid.Sandbox do
   defp wait_for_container(container_name, retries) when retries > 0 do
     Process.sleep(1_000)
 
-    case System.cmd("podman", ["inspect", "--format", "{{.State.Running}}", container_name],
+    case Orchid.OS.Command.run(
+           "podman",
+           ["inspect", "--format", "{{.State.Running}}", container_name],
            stderr_to_stdout: true
          ) do
       {"true\n", 0} -> :running
@@ -587,7 +595,7 @@ defmodule Orchid.Sandbox do
   end
 
   defp destroy_container(state) do
-    System.cmd("podman", ["rm", "-f", state.container_name], stderr_to_stdout: true)
+    Orchid.OS.Command.run("podman", ["rm", "-f", state.container_name], stderr_to_stdout: true)
   end
 
   # ── Private: Command execution (standalone, no GenServer) ──
@@ -595,7 +603,7 @@ defmodule Orchid.Sandbox do
   defp podman_exec(cname, command, timeout \\ 30_000) do
     task =
       Task.async(fn ->
-        System.cmd(
+        Orchid.OS.Command.run(
           "podman",
           [
             "exec",
@@ -610,10 +618,16 @@ defmodule Orchid.Sandbox do
         )
       end)
 
-    case Task.yield(task, timeout) || Task.shutdown(task) do
-      {:ok, {output, 0}} -> {:ok, output}
-      {:ok, {output, code}} -> {:error, "Exit code #{code}:\n#{output}"}
-      nil -> {:error, "Command timed out after #{timeout}ms"}
+    case Task.yield(task, timeout) do
+      {:ok, {output, 0}} ->
+        {:ok, output}
+
+      {:ok, {output, code}} ->
+        {:error, "Exit code #{code}:\n#{output}"}
+
+      nil ->
+        Task.shutdown(task, :brutal_kill)
+        {:error, "Command timed out after #{timeout}ms"}
     end
   end
 
@@ -623,42 +637,14 @@ defmodule Orchid.Sandbox do
 
     try do
       args = ["exec", "-i", "-w", "/workspace", cname, "sh", "-c", command]
+      shell = "cat #{escape(tmpfile)} | podman #{Enum.map_join(args, " ", &escape/1)}"
 
-      port =
-        Port.open(
-          {:spawn_executable, System.find_executable("sh")},
-          [
-            :binary,
-            :exit_status,
-            args: ["-c", "cat #{escape(tmpfile)} | podman #{Enum.map_join(args, " ", &escape/1)}"]
-          ]
-        )
-
-      collect_port_output(port, "")
+      case Orchid.OS.Command.run("sh", ["-c", shell], stderr_to_stdout: true) do
+        {output, 0} -> {:ok, output}
+        {output, code} -> {:error, "Exit code #{code}:\n#{output}"}
+      end
     after
       File.rm(tmpfile)
-    end
-  end
-
-  defp collect_port_output(port, acc) do
-    receive do
-      {^port, {:data, data}} ->
-        collect_port_output(port, acc <> data)
-
-      {^port, {:exit_status, 0}} ->
-        {:ok, acc}
-
-      {^port, {:exit_status, code}} ->
-        {:error, "Exit code #{code}:\n#{acc}"}
-    after
-      300_000 ->
-        try do
-          Port.close(port)
-        catch
-          _, _ -> :ok
-        end
-
-        {:error, "Timed out waiting for command"}
     end
   end
 
@@ -677,7 +663,9 @@ defmodule Orchid.Sandbox do
   end
 
   defp container_running?(container_name) when is_binary(container_name) do
-    case System.cmd("podman", ["inspect", "--format", "{{.State.Running}}", container_name],
+    case Orchid.OS.Command.run(
+           "podman",
+           ["inspect", "--format", "{{.State.Running}}", container_name],
            stderr_to_stdout: true
          ) do
       {"true\n", 0} -> true

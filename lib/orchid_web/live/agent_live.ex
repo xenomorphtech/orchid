@@ -5,6 +5,7 @@ defmodule OrchidWeb.AgentLive do
 
   @active_poll_interval_ms 1_500
   @idle_poll_interval_ms 5_000
+  @event_log_tail_lines 80
   @server_log_tail_lines 80
   @server_log_tail_chunk_bytes 16_384
 
@@ -125,6 +126,7 @@ defmodule OrchidWeb.AgentLive do
 
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Orchid.PubSub, "mcp_calls")
+      Phoenix.PubSub.subscribe(Orchid.PubSub, "event_log")
       schedule_poll(socket)
     end
 
@@ -470,6 +472,7 @@ defmodule OrchidWeb.AgentLive do
      |> assign(:decomp_result, nil)
      |> assign(:decomp_error, nil)
      |> refresh_sandbox_statuses()
+     |> assign(:event_log_entries, recent_events(nil, @event_log_tail_lines))
      |> assign(:mcp_calls, recent_mcp_calls(nil, 40))}
   end
 
@@ -503,6 +506,7 @@ defmodule OrchidWeb.AgentLive do
           |> assign(:current_project, nil)
           |> assign(:goals, [])
           |> assign(:project_tab, :overview)
+          |> assign(:event_log_entries, recent_events(nil, @event_log_tail_lines))
           |> assign(:mcp_calls, recent_mcp_calls(nil, 40))
           |> refresh_sandbox_statuses()
         end
@@ -801,6 +805,15 @@ defmodule OrchidWeb.AgentLive do
 
   def handle_event("refresh_diagnostics", _params, socket) do
     {:noreply, refresh_diagnostics(socket)}
+  end
+
+  def handle_event("refresh_events", _params, socket) do
+    {:noreply,
+     assign(
+       socket,
+       :event_log_entries,
+       recent_events(socket.assigns.current_project, @event_log_tail_lines)
+     )}
   end
 
   def handle_event("update_decomp_goal", %{"goal" => goal}, socket) do
@@ -1124,6 +1137,21 @@ defmodule OrchidWeb.AgentLive do
     {:noreply, socket}
   end
 
+  def handle_info({:event_log, event}, socket) do
+    relevant =
+      is_nil(socket.assigns.current_project) or event.project_id == socket.assigns.current_project
+
+    socket =
+      if relevant do
+        entries = [event | socket.assigns.event_log_entries] |> Enum.take(@event_log_tail_lines)
+        assign(socket, :event_log_entries, entries)
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
   def handle_info(
         {:decomposition_test_done, result, raw_output, duration_ms, model, num_paths,
          max_iterations},
@@ -1393,6 +1421,40 @@ defmodule OrchidWeb.AgentLive do
               </form>
             </div>
           <% end %>
+
+          <div class="goals-section" style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.75rem;">
+              <div>
+                <h3 style="color: #c9d1d9; margin: 0; font-size: 1rem;">Recent Events</h3>
+                <div style="color: #8b949e; font-size: 0.8rem; margin-top: 0.2rem;">
+                  <%= event_scope_label(@current_project) %> · last <%= @event_log_tail_lines %> shown from a <%= Orchid.EventLog.window() %>-event buffer
+                </div>
+              </div>
+              <button
+                class="btn btn-secondary btn-sm"
+                style="padding: 0.2rem 0.5rem; font-size: 0.75rem;"
+                phx-click="refresh_events"
+              >Refresh</button>
+            </div>
+
+            <%= if @event_log_entries == [] do %>
+              <div style="color: #8b949e; font-size: 0.85rem;">No event output yet.</div>
+            <% else %>
+              <div style="max-height: 18rem; overflow-y: auto; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 0.25rem 0.75rem;">
+                <%= for ev <- @event_log_entries do %>
+                  <div style="display: flex; gap: 0.6rem; align-items: flex-start; font-size: 0.75rem; padding: 0.4rem 0; border-bottom: 1px solid #21262d;">
+                    <span style="color: #8b949e; min-width: 56px;"><%= short_time(ev.inserted_at) %></span>
+                    <span style="color: #d29922; min-width: 92px;"><%= event_source_label(ev.source) %></span>
+                    <%= if is_nil(@current_project) do %>
+                      <span style="color: #58a6ff; font-family: monospace; min-width: 74px;"><%= short_project_id(ev.project_id) %></span>
+                    <% end %>
+                    <span style="color: #79c0ff; font-family: monospace; min-width: 74px;"><%= short_agent_id(ev.agent_id || "-") %></span>
+                    <span style="color: #c9d1d9; white-space: pre-wrap; word-break: break-word; flex: 1;"><%= ev.message %></span>
+                  </div>
+                <% end %>
+              </div>
+            <% end %>
+          </div>
 
           <%= if @show_diagnostics do %>
             <div class="goals-section" style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
@@ -2647,6 +2709,7 @@ defmodule OrchidWeb.AgentLive do
     |> assign(:current_project, project_id)
     |> assign(:project_tab, tab)
     |> assign(:goals, Orchid.Goals.list_for_project(project_id))
+    |> assign(:event_log_entries, recent_events(project_id, @event_log_tail_lines))
     |> assign(:mcp_calls, recent_mcp_calls(project_id, 40))
     |> assign(:decomp_result, nil)
     |> assign(:decomp_error, nil)
@@ -2904,6 +2967,11 @@ defmodule OrchidWeb.AgentLive do
 
   defp clear_diagnostics(socket) do
     socket
+    |> assign(
+      :event_log_entries,
+      recent_events(socket.assigns.current_project, @event_log_tail_lines)
+    )
+    |> assign(:event_log_tail_lines, @event_log_tail_lines)
     |> assign(:server_log_path, server_log_path())
     |> assign(:server_log_tail, "")
     |> assign(:server_log_error, nil)
@@ -2924,6 +2992,11 @@ defmodule OrchidWeb.AgentLive do
 
     socket =
       socket
+      |> assign(
+        :event_log_entries,
+        recent_events(socket.assigns.current_project, @event_log_tail_lines)
+      )
+      |> assign(:event_log_tail_lines, @event_log_tail_lines)
       |> assign(:server_log_path, path)
       |> assign(:server_log_tail_lines, @server_log_tail_lines)
       |> assign(:server_log_updated_at, DateTime.utc_now())
@@ -3038,11 +3111,36 @@ defmodule OrchidWeb.AgentLive do
     end
   end
 
+  defp recent_events(project_id, limit) do
+    try do
+      Orchid.EventLog.list_recent(project_id: project_id, limit: limit)
+    rescue
+      _ -> []
+    catch
+      :exit, _ -> []
+    end
+  end
+
+  defp event_scope_label(nil), do: "All projects"
+  defp event_scope_label(_project_id), do: "Current project"
+
+  defp event_source_label(source) when is_binary(source) do
+    source
+    |> String.replace("_", " ")
+    |> String.capitalize()
+  end
+
+  defp event_source_label(source), do: inspect(source)
+
   defp short_agent_id(id) when is_binary(id) do
     String.slice(id, 0, 8)
   end
 
   defp short_agent_id(id), do: inspect(id)
+
+  defp short_project_id(nil), do: "global"
+  defp short_project_id(id) when is_binary(id), do: String.slice(id, 0, 8)
+  defp short_project_id(id), do: inspect(id)
 
   defp short_time(%DateTime{} = dt), do: Calendar.strftime(dt, "%H:%M:%S")
   defp short_time(_), do: "--:--:--"
