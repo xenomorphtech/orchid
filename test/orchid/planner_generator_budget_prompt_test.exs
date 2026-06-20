@@ -30,4 +30,41 @@ defmodule Orchid.PlannerGeneratorBudgetPromptTest do
     assert prompt =~ "Delegate tasks recursively plan"
     assert prompt =~ "topologically ordered list of concrete tool tasks"
   end
+
+  test "generator prompt turns verifier critique into a concrete revision checklist" do
+    Process.put(:planner_generator_budget_prompt_test, self())
+
+    assert {:ok, []} =
+             Generator.generate("finish the benchmark", [],
+               llm_module: CapturingLLM,
+               llm_memoize: false,
+               revision_attempt: 2,
+               revision_budget: 3,
+               revision_feedback: [
+                 %{
+                   source: :verifier,
+                   attempt: 1,
+                   critique: """
+                   The plan delegates known file work instead of scheduling executable steps.
+
+                   Required fixes:
+                   - Replace the broad delegate with a concrete shell task.
+                   - Add the final test command as a tool task.
+                   """,
+                   rejected_plan_json:
+                     ~s([{"id":"broad","type":"delegate","objective":"Patch and test."}])
+                 }
+               ]
+             )
+
+    assert_receive {:llm_context, context}
+    prompt = context.messages |> List.first() |> Map.fetch!(:content)
+
+    assert prompt =~ "REVISION FEEDBACK"
+    assert prompt =~ "mandatory rewrite instructions"
+    assert prompt =~ "Revision checklist"
+    assert prompt =~ "Replace the broad delegate with a concrete shell task."
+    assert prompt =~ "Add the final test command as a tool task."
+    assert prompt =~ "Rejected task array"
+  end
 end

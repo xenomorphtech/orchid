@@ -61,7 +61,7 @@ defmodule Orchid.Planner.Verifier do
       {:ok, decoded} ->
         case decision_status(decoded) do
           {:ok, :approved} -> {:approved, decision_message(decoded, "reason", raw)}
-          {:ok, :flawed} -> {:flawed, decision_message(decoded, "critique", raw)}
+          {:ok, :flawed} -> {:flawed, flawed_message(decoded, raw)}
           {:error, reason} -> {:retry, raw_critique(raw, reason)}
         end
 
@@ -121,8 +121,16 @@ defmodule Orchid.Planner.Verifier do
       "flawless_case": "best argument that the task array will succeed",
       "terrible_case": "best argument that the task array will fail",
       "reason": "approval reason when status is approved",
-      "critique": "specific fixable critique when status is flawed"
+      "critique": "specific fixable critique when status is flawed",
+      "required_fixes": [
+        "concrete rewrite instruction the reviser must apply before approval"
+      ]
     }
+
+    When status is "flawed", the critique must name the blocking flaw and
+    required_fixes must be concrete edit instructions for the next task array:
+    add, remove, split, reorder, or replace exact task kinds/objectives/tool
+    args. Do not return generic advice such as "be more specific".
     """
     |> String.trim()
   end
@@ -303,6 +311,64 @@ defmodule Orchid.Planner.Verifier do
     end
   end
 
+  defp flawed_message(decoded, raw) do
+    base = decision_message(decoded, "critique", raw)
+
+    case required_fixes(decoded) do
+      [] ->
+        base
+
+      fixes ->
+        """
+        #{base}
+
+        Required fixes:
+        #{Enum.map_join(fixes, "\n", &"- #{&1}")}
+        """
+        |> String.trim()
+    end
+  end
+
+  defp required_fixes(decoded) do
+    decoded
+    |> Map.get("required_fixes")
+    |> normalize_required_fixes()
+  end
+
+  defp normalize_required_fixes(value) when is_list(value) do
+    value
+    |> Enum.map(&required_fix_text/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp normalize_required_fixes(value) when is_binary(value) do
+    value
+    |> String.split(~r/\r?\n/)
+    |> Enum.map(&String.trim/1)
+    |> Enum.map(&String.trim_leading(&1, "- "))
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp normalize_required_fixes(_value), do: []
+
+  defp required_fix_text(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> blank_to_nil()
+  end
+
+  defp required_fix_text(value) when is_map(value) do
+    ["instruction", "fix", "change", "description", "objective"]
+    |> Enum.find_value(fn key ->
+      case Map.get(value, key) || Map.get(value, String.to_atom(key)) do
+        text when is_binary(text) -> text |> String.trim() |> blank_to_nil()
+        _ -> nil
+      end
+    end)
+  end
+
+  defp required_fix_text(_value), do: nil
+
   defp balanced_cases(decoded) do
     flawless = Map.get(decoded, "flawless_case")
     terrible = Map.get(decoded, "terrible_case")
@@ -315,6 +381,9 @@ defmodule Orchid.Planner.Verifier do
         nil
     end
   end
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
 
   defp encode_tasks(tasks) do
     tasks

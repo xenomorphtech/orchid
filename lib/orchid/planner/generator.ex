@@ -150,11 +150,13 @@ defmodule Orchid.Planner.Generator do
       #{attempt_line}
       The previous candidate plan was not accepted. Treat verifier critiques as
       mandatory rewrite instructions, not advice. Produce a revised JSON array
-      that directly fixes every issue below. When a critique asks to split,
-      sequence, add evidence, or make a dependency explicit, change the task
-      array accordingly with separate ordered tasks or concrete task objectives.
-      Do not repeat rejected structure, invalid task types, prose-only answers,
-      or markdown.
+      that directly fixes every issue below. Mutate the rejected task array:
+      add, remove, split, reorder, or replace tasks until every concrete fix is
+      represented by task structure, task objective text, tool name, or tool
+      args. When a critique asks to split, sequence, add evidence, or make a
+      dependency explicit, change the task array accordingly with separate
+      ordered tasks or concrete task objectives. Do not repeat rejected
+      structure, invalid task types, prose-only answers, or markdown.
 
       #{Enum.map_join(feedback, "\n\n", &format_revision_feedback/1)}
       """
@@ -189,6 +191,9 @@ defmodule Orchid.Planner.Generator do
     Attempt #{attempt} verifier critique (mandatory revision instructions):
     #{limit_text(critique, 1_500)}
 
+    Revision checklist:
+    #{revision_checklist(critique)}
+
     Rejected task array:
     #{limit_text(rejected_plan_json, 2_500)}
     """
@@ -196,6 +201,45 @@ defmodule Orchid.Planner.Generator do
   end
 
   defp format_revision_feedback(other), do: inspect(other, limit: 20)
+
+  defp revision_checklist(critique) do
+    critique
+    |> concrete_revision_lines()
+    |> case do
+      [] ->
+        "- Rewrite the rejected task array so the verifier critique is no longer true."
+
+      lines ->
+        Enum.map_join(lines, "\n", &"- #{&1}")
+    end
+  end
+
+  defp concrete_revision_lines(text) when is_binary(text) do
+    text
+    |> String.split(~r/\r?\n/)
+    |> Enum.map(&String.trim/1)
+    |> Enum.map(&strip_bullet/1)
+    |> Enum.filter(&concrete_revision_line?/1)
+    |> Enum.take(8)
+  end
+
+  defp concrete_revision_lines(_text), do: []
+
+  defp strip_bullet(line) do
+    line
+    |> String.trim_leading("- ")
+    |> String.trim_leading("* ")
+    |> String.trim()
+  end
+
+  defp concrete_revision_line?(line) do
+    line != "" and
+      String.length(line) <= 280 and
+      String.match?(
+        String.downcase(line),
+        ~r/\b(add|remove|split|replace|reorder|include|make|use|avoid|require|read|list|grep|shell|edit|tool|delegate|task|args?)\b/
+      )
+  end
 
   defp path_note(opts) do
     index = Map.get(opts, :path_index)
