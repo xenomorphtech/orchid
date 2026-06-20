@@ -67,6 +67,7 @@ defmodule Orchid.Autonomy.Runner do
   @default_gvr_max_rounds 6
   @default_gvr_max_delegate_depth 3
   @agent_tools ~w(shell read edit list grep task_report_result)
+  @planner_llm_config %{provider: :codex, model: :gpt55}
 
   @doc """
   Run a benchmark unattended.
@@ -214,21 +215,25 @@ defmodule Orchid.Autonomy.Runner do
     %{
       project_id: project_id,
       execution_mode: :vm,
-      provider: :openrouter,
-      model: :nex_n2_pro,
       intervention: :disabled,
       allowed_tools: @agent_tools,
       system_prompt: system_prompt(benchmark)
     }
-    |> maybe_put_openrouter_api_key()
+    |> Map.merge(@planner_llm_config)
     |> Map.merge(Keyword.get(opts, :agent_config, %{}))
+    |> maybe_put_openrouter_api_key()
   end
 
-  defp maybe_put_openrouter_api_key(config) do
+  defp maybe_put_openrouter_api_key(%{provider: provider} = config)
+       when provider in [:openrouter, "openrouter"] do
     case System.get_env("OPENROUTER_API_KEY") do
       key when is_binary(key) and key != "" -> Map.put_new(config, :api_key, key)
       _ -> config
     end
+  end
+
+  defp maybe_put_openrouter_api_key(config) do
+    config
   end
 
   defp create_goal(benchmark, project_id) do
@@ -637,9 +642,9 @@ defmodule Orchid.Autonomy.Runner do
   end
 
   defp gvr_llm_config(opts) do
-    %{provider: :openrouter, model: :nex_n2_pro}
-    |> maybe_put_openrouter_api_key()
+    @planner_llm_config
     |> Map.merge(Keyword.get(opts, :gvr_llm_config, %{}))
+    |> maybe_put_openrouter_api_key()
   end
 
   defp gvr_planning_objective(context) do
