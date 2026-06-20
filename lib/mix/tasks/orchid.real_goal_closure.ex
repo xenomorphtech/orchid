@@ -1052,6 +1052,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     children = [
       Orchid.Store,
       {Registry, keys: :unique, name: Orchid.Registry},
+      Orchid.Autonomy.SandboxReaper,
       {DynamicSupervisor, strategy: :one_for_one, name: Orchid.AgentSupervisor},
       Orchid.GoalReviewQueue
     ]

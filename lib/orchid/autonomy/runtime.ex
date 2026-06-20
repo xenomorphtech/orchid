@@ -19,6 +19,7 @@ defmodule Orchid.Autonomy.Runtime do
          :ok <- ensure_agent_tables(),
          :ok <- ensure_store(),
          :ok <- ensure_registry(),
+         :ok <- ensure_sandbox_reaper(),
          :ok <- ensure_agent_supervisor() do
       seed_facts(opts)
     end
@@ -77,6 +78,12 @@ defmodule Orchid.Autonomy.Runtime do
   defp ensure_agent_supervisor do
     ensure_process(Orchid.AgentSupervisor, fn ->
       DynamicSupervisor.start_link(strategy: :one_for_one, name: Orchid.AgentSupervisor)
+    end)
+  end
+
+  defp ensure_sandbox_reaper do
+    ensure_process(Orchid.Autonomy.SandboxReaper, fn ->
+      Orchid.Autonomy.SandboxReaper.start_link()
     end)
   end
 

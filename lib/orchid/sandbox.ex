@@ -8,6 +8,7 @@ defmodule Orchid.Sandbox do
   use GenServer
   require Logger
 
+  alias Orchid.Autonomy.SandboxReaper
   alias Orchid.{Project, Sandbox.Overlay}
 
   defstruct [
@@ -19,6 +20,8 @@ defmodule Orchid.Sandbox do
     :merged_path,
     :overlay_method,
     :image,
+    :data_dir,
+    :owner_labels,
     :status
   ]
 
@@ -32,6 +35,7 @@ defmodule Orchid.Sandbox do
     base = Path.join([data_dir, "sandboxes", project_id])
 
     %{
+      data_dir: data_dir,
       lower: lower,
       upper: Path.join(base, "upper"),
       work: Path.join(base, "work"),
@@ -257,6 +261,7 @@ defmodule Orchid.Sandbox do
 
     image = get_image()
     cname = container_name(project_id)
+    owner_labels = SandboxReaper.write_owner_metadata!(project_id, data_dir: p.data_dir)
 
     state = %__MODULE__{
       project_id: project_id,
@@ -266,6 +271,8 @@ defmodule Orchid.Sandbox do
       work_path: p.work,
       merged_path: p.merged,
       image: image,
+      data_dir: p.data_dir,
+      owner_labels: owner_labels,
       overlay_method: nil,
       status: :starting
     }
@@ -294,6 +301,7 @@ defmodule Orchid.Sandbox do
   @impl true
   def terminate(_reason, state) do
     destroy_container(state)
+    SandboxReaper.reap_sandbox_dir(state.project_id, data_dir: state.data_dir)
     :ok
   end
 
@@ -497,6 +505,7 @@ defmodule Orchid.Sandbox do
         "-v",
         "#{state.work_path}:/workspace_work"
       ] ++
+        SandboxReaper.podman_label_args(state.owner_labels) ++
         dns_args() ++
         claude_mounts() ++
         codex_mounts() ++
@@ -544,6 +553,7 @@ defmodule Orchid.Sandbox do
         "-v",
         "#{state.upper_path}:/workspace:rw"
       ] ++
+        SandboxReaper.podman_label_args(state.owner_labels) ++
         dns_args() ++
         claude_mounts() ++
         codex_mounts() ++

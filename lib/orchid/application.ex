@@ -24,6 +24,8 @@ defmodule Orchid.Application do
       Orchid.Store,
       # Registry for looking up agents by ID
       {Registry, keys: :unique, name: Orchid.Registry},
+      # Reclaim crashed/killed Podman sandboxes before new work starts
+      Orchid.Autonomy.SandboxReaper,
       # DynamicSupervisor for agent processes
       {DynamicSupervisor, strategy: :one_for_one, name: Orchid.AgentSupervisor},
       # Serialized completion-review queue to avoid reviewer call floods
