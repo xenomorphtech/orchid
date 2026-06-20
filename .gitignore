@@ -30,3 +30,13 @@ orchid_temp-*.tar
 # CubDB persistent data
 /priv/data/
 /priv/codex_sdk/node_modules/
+
+# at-scale discriminator grind scratch (paid-model-gated; not part of the repo)
+/grind*.log
+/grind*.sh
+/priv/autonomy/discriminators_gvr.json
+/priv/autonomy/*_FAILED_*.json
+/priv/autonomy/*_CONTAMINATED.json
+/priv/autonomy/discriminators_*.json
+/priv/autonomy/*_NOAPPROVAL*.json
+/priv/autonomy/easy_gvr.json
