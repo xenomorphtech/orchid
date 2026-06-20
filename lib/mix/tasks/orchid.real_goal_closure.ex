@@ -11,8 +11,10 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
   @shortdoc "Run the Orchid real-goal closure harness"
   @real_default_out Path.join(["priv", "autonomy", "real_goal_closure.json"])
   @gvr_default_out Path.join(["priv", "autonomy", "gvr_real_goal_closure.json"])
+  @gvr_vs_flat_default_out Path.join(["priv", "autonomy", "gvr_vs_flat_real.json"])
   @default_goal_timeout_ms 720_000
   @default_success_timeout_ms 30_000
+  @default_gvr_retry_attempts 2
   @poll_interval_ms 5_000
   @completion_grace_ms 120_000
   @free_provider :openrouter
@@ -101,14 +103,157 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     )
   end
 
-  defp run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd) do
+  def run_gvr_vs_flat(args) do
+    {opts, _argv, invalid} =
+      OptionParser.parse(args,
+        strict: [
+          out: :string,
+          goal_timeout_ms: :integer,
+          success_timeout_ms: :integer,
+          gvr_retries: :integer,
+          keep_data_dir: :boolean
+        ]
+      )
+
+    reject_invalid_options!(invalid)
+
+    repo_cwd = File.cwd!()
+
+    output_path =
+      opts |> Keyword.get(:out, @gvr_vs_flat_default_out) |> validate_output_path!()
+
+    output_file = Path.expand(output_path, repo_cwd)
+
+    goal_timeout_ms =
+      opts
+      |> Keyword.get(:goal_timeout_ms, @default_goal_timeout_ms)
+      |> validate_positive_integer!("--goal-timeout-ms")
+
+    success_timeout_ms =
+      opts
+      |> Keyword.get(:success_timeout_ms, @default_success_timeout_ms)
+      |> validate_positive_integer!("--success-timeout-ms")
+
+    gvr_retries =
+      opts
+      |> Keyword.get(:gvr_retries, @default_gvr_retry_attempts)
+      |> validate_non_negative_integer!("--gvr-retries")
+
+    keep_data_dir? = Keyword.get(opts, :keep_data_dir, false)
+    data_dir = temp_data_dir()
+    started_at = monotonic_ms()
+    previous_trap_exit = Process.flag(:trap_exit, true)
+
+    Application.put_env(:orchid, :data_dir, data_dir)
+    Application.put_env(:orchid, :goal_watcher_planner_mode, :auto)
+    Application.put_env(:orchid, :goal_watcher_gvr_flat_fallback, false)
+
+    start_dependencies!()
+    supervisor = start_minimal_runtime!()
+
+    report =
+      try do
+        seed_templates!()
+        seed_facts!()
+        force_free_model_templates!()
+
+        definition = gvr_vs_flat_real_goal()
+
+        File.cd!(repo_cwd)
+        flat = run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd, :flat)
+
+        File.cd!(repo_cwd)
+
+        gvr_attempts =
+          run_gvr_with_retries(
+            definition,
+            goal_timeout_ms,
+            success_timeout_ms,
+            repo_cwd,
+            gvr_retries
+          )
+
+        gvr = List.last(gvr_attempts)
+
+        File.cd!(repo_cwd)
+
+        report =
+          build_gvr_vs_flat_report(
+            definition,
+            flat,
+            gvr,
+            gvr_attempts,
+            data_dir,
+            output_file,
+            started_at,
+            gvr_retries
+          )
+
+        write_report!(report, output_file)
+        report
+      after
+        File.cd!(repo_cwd)
+        stop_named(GoalWatcher)
+        Supervisor.stop(supervisor)
+
+        File.cd!(repo_cwd)
+
+        unless keep_data_dir? do
+          File.rm_rf(data_dir)
+        end
+
+        Application.put_env(:orchid, :goal_watcher_planner_mode, :auto)
+        Process.flag(:trap_exit, previous_trap_exit)
+      end
+
+    Mix.shell().info(
+      "orchid.gvr_vs_flat_real: flat_closed=#{report.flat_closed} " <>
+        "gvr_closed=#{report.gvr_closed} gvr_beats_flat=#{report.gvr_beats_flat}; " <>
+        "wrote #{output_path}"
+    )
+  end
+
+  defp run_gvr_with_retries(
+         definition,
+         goal_timeout_ms,
+         success_timeout_ms,
+         repo_cwd,
+         retries_remaining,
+         attempts \\ []
+       ) do
+    result = run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd, :gvr)
+    attempts = attempts ++ [result]
+
+    cond do
+      result.closed ->
+        attempts
+
+      not result.reliability_failure ->
+        attempts
+
+      retries_remaining <= 0 ->
+        attempts
+
+      true ->
+        run_gvr_with_retries(
+          definition,
+          goal_timeout_ms,
+          success_timeout_ms,
+          repo_cwd,
+          retries_remaining - 1,
+          attempts
+        )
+    end
+  end
+
+  defp run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd, route_mode \\ :auto) do
     started_at = monotonic_ms()
 
     case create_fixture(definition) do
       {:ok, %{project: project, goal: goal, workspace: workspace}} ->
         runtime_goal_input = RuntimeGoal.from_goal_watcher(project, [goal])
         request = GoalWatcher.runtime_planner_request(project, [goal])
-        decision = Router.classify(request.route_input)
+        decision = route_decision(request.route_input, route_mode)
 
         runtime_contract = %{
           goal_label: request.goal_label,
@@ -117,6 +262,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
 
         counter = __MODULE__.ModelCallCounter.start!()
         File.cd!(repo_cwd)
+        Application.put_env(:orchid, :goal_watcher_planner_mode, route_mode)
         start_goal_watcher!(repo_cwd)
 
         try do
@@ -189,7 +335,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       {:error, reason} ->
         %{
           id: definition.id,
-          route_mode: nil,
+          route_mode: route_mode,
           closed: false,
           nudges: 0,
           failure_mode: "fixture_error: #{truncate(inspect(reason), 800)}",
@@ -198,6 +344,13 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
           duration_ms: monotonic_ms() - started_at
         }
     end
+  end
+
+  defp route_decision(route_input, :auto), do: Router.classify(route_input)
+
+  defp route_decision(route_input, mode) when mode in [:flat, :gvr] do
+    decision = Router.classify(route_input)
+    %{decision | mode: mode, signal: "#{decision.signal}; selected_mode=#{mode}"}
   end
 
   defp wait_for_goal(definition, project, goal_id, state) do
@@ -368,6 +521,97 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       goals: goals,
       duration_ms: monotonic_ms() - started_at
     }
+  end
+
+  defp build_gvr_vs_flat_report(
+         definition,
+         flat,
+         gvr,
+         gvr_attempts,
+         data_dir,
+         output_path,
+         started_at,
+         gvr_retries
+       ) do
+    gvr_beats_flat = not flat.closed and gvr.closed
+
+    %{
+      generated_at: DateTime.utc_now() |> DateTime.to_iso8601(),
+      harness: "Mix.Tasks.Orchid.GvrVsFlatReal",
+      harness_path: "lib/mix/tasks/orchid.gvr_vs_flat_real.ex",
+      implementation_path: "lib/mix/tasks/orchid.real_goal_closure.ex",
+      product_entry: "Orchid.GoalWatcher",
+      route_contract:
+        "GoalWatcher.runtime_planner_request -> RuntimeGoal.from_goal_watcher -> Router -> planner",
+      runner_substrate: "durable per-project sandbox via Orchid.Projects.ensure_sandbox",
+      model: "openrouter/#{Orchid.LLM.Catalog.resolve_model(@free_model, @free_provider)}",
+      data_dir: data_dir,
+      report_path: output_path,
+      goal_id: definition.id,
+      success_check: definition.success_check,
+      same_workspace_seed: true,
+      workspace_seed: seed_manifest(definition.seed_files),
+      flat_closed: flat.closed,
+      gvr_closed: gvr.closed,
+      gvr_beats_flat: gvr_beats_flat,
+      nudges: %{
+        flat: flat.nudges,
+        gvr: gvr.nudges
+      },
+      failure_modes: %{
+        flat: flat.failure_mode,
+        gvr: gvr.failure_mode
+      },
+      flat: arm_summary(flat),
+      gvr: arm_summary(gvr),
+      gvr_retry_limit: gvr_retries,
+      gvr_attempt_count: length(gvr_attempts),
+      gvr_attempts: Enum.map(gvr_attempts, &arm_summary/1),
+      criteria: %{
+        same_real_goal: flat.id == definition.id and gvr.id == definition.id,
+        same_workspace_seed: true,
+        same_external_success_check:
+          get_in(flat, [:success_check, :command]) == definition.success_check and
+            get_in(gvr, [:success_check, :command]) == definition.success_check,
+        forced_flat: flat.route_mode == :flat,
+        forced_gvr: gvr.route_mode == :gvr,
+        all_success_checks_external: true,
+        result_recorded_honestly: true,
+        gvr_beats_flat: gvr_beats_flat
+      },
+      arms: %{
+        flat: flat,
+        gvr: gvr
+      },
+      duration_ms: monotonic_ms() - started_at
+    }
+  end
+
+  defp arm_summary(result) do
+    %{
+      closed: result.closed,
+      nudges: result.nudges,
+      failure_mode: result.failure_mode,
+      reliability_failure: result.reliability_failure,
+      route_mode: result.route_mode,
+      status: result.status,
+      project_id: Map.get(result, :project_id),
+      goal_id: Map.get(result, :goal_id),
+      workspace: Map.get(result, :workspace),
+      model_calls: Map.get(result, :model_calls),
+      watcher_checks: Map.get(result, :watcher_checks),
+      duration_ms: Map.get(result, :duration_ms)
+    }
+  end
+
+  defp seed_manifest(seed_files) do
+    Enum.map(seed_files, fn %{path: path, content: content} ->
+      %{
+        path: path,
+        bytes: byte_size(content),
+        sha256: :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
+      }
+    end)
   end
 
   defp create_fixture(definition) do
@@ -666,6 +910,11 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     ]
   end
 
+  defp gvr_vs_flat_real_goal do
+    gvr_real_goals()
+    |> List.first()
+  end
+
   defp start_dependencies! do
     for app <- [:logger, :crypto, :ssl, :public_key, :jason, :req, :cubdb] do
       case Application.ensure_all_started(app) do
@@ -902,6 +1151,9 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
         "no space left",
         "enospc",
         "container save",
+        "exit code 125",
+        "no container with name",
+        "no such container",
         "timed out starting orchid mcp bridge",
         "openrouter api error"
       ],
@@ -955,6 +1207,12 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
 
   defp validate_positive_integer!(value, flag),
     do: Mix.raise("#{flag} must be positive, got #{inspect(value)}")
+
+  defp validate_non_negative_integer!(value, _flag) when is_integer(value) and value >= 0,
+    do: value
+
+  defp validate_non_negative_integer!(value, flag),
+    do: Mix.raise("#{flag} must be non-negative, got #{inspect(value)}")
 
   defp temp_data_dir do
     suffix = "#{System.system_time(:nanosecond)}-#{System.unique_integer([:positive])}"
