@@ -3,6 +3,8 @@ defmodule Orchid.LLM.CodexTest do
 
   alias Orchid.LLM.Codex
 
+  @moduletag :external
+
   @runner Path.expand("../../support/codex_runner_echo.mjs", __DIR__)
 
   setup do

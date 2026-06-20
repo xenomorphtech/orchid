@@ -17,8 +17,10 @@ defmodule Orchid.LLM.CatalogTest do
   end
 
   test "infers providers only for single-provider models" do
-    assert Catalog.provider_for_model(:gpt54) == :codex
     assert Catalog.provider_for_model(:gemini_pro) == :gemini
+    assert Catalog.provider_for_model(:llama_3_1_8b) == :cerebras
+
+    assert Catalog.provider_for_model(:gpt54) == nil
     assert Catalog.provider_for_model(:sonnet) == nil
   end
 end
