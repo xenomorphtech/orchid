@@ -1,0 +1,78 @@
+{
+  "started_at": "2026-06-20T18:40:19.032431Z",
+  "final": {
+    "containers": [],
+    "leaked_orphans": 0,
+    "sandbox_dir_count": 0,
+    "sandbox_dirs": []
+  },
+  "data_dir": "/home/sdancer/orchid-sandbox-reaper/priv/data",
+  "fresh_startup_sweep": {
+    "exit_status": 0,
+    "output": "\n18:41:09.278 [info] Sandbox reaper startup: containers_reaped=1 dirs_reaped=1 errors=0\n",
+    "report": {
+      "leaked_orphans": "0",
+      "reaper_report": {
+        "containers_kept": [],
+        "containers_reaped": [],
+        "dirs_kept": [],
+        "dirs_reaped": [],
+        "errors": []
+      }
+    }
+  },
+  "baseline": {
+    "containers": [],
+    "leaked_orphans": 0,
+    "sandbox_dir_count": 0,
+    "sandbox_dirs": []
+  },
+  "criteria": {
+    "leaked_orphans_zero": true,
+    "runs_at_least_3": true,
+    "sandbox_dirs_clean": true,
+    "sigkill_mid_run": true
+  },
+  "finished_at": "2026-06-20T18:41:09.530747Z",
+  "normal_runs": [
+    {
+      "index": 1,
+      "status": "ok",
+      "container_name": "orchid-project-reaper-stress-normal-1-uMbSBmw",
+      "duration_ms": 16153,
+      "project_id": "reaper-stress-normal-1-uMbSBmw"
+    },
+    {
+      "index": 2,
+      "status": "ok",
+      "container_name": "orchid-project-reaper-stress-normal-2-EJ9nrxg",
+      "duration_ms": 16574,
+      "project_id": "reaper-stress-normal-2-EJ9nrxg"
+    }
+  ],
+  "requested_runs": 3,
+  "sigkill_run": {
+    "index": 3,
+    "killed": true,
+    "container_name": "orchid-project-reaper-stress-sigkill-3-1UffQCA",
+    "duration_ms": 2580,
+    "project_id": "reaper-stress-sigkill-3-1UffQCA",
+    "child_exit_status": 137,
+    "child_os_pid": 558384,
+    "child_report": {
+      "container_name": "orchid-project-reaper-stress-sigkill-3-1UffQCA",
+      "owner": {
+        "pid": "558384",
+        "run_id": "orchid-run-558384-288213294",
+        "start_time": "288213294"
+      },
+      "project_id": "reaper-stress-sigkill-3-1UffQCA",
+      "sandbox": {
+        "container_name": "orchid-project-reaper-stress-sigkill-3-1UffQCA",
+        "overlay_method": "union",
+        "running": true,
+        "status": "ready"
+      }
+    }
+  }
+}
