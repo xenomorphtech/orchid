@@ -10,6 +10,7 @@ defmodule Mix.Tasks.Orchid.ClosureRegression do
   @default_goal_timeout_ms 720_000
   @default_gvr_goal_timeout_ms 180_000
   @default_success_timeout_ms 30_000
+  @flat_goal_total 4
   @task_path "lib/mix/tasks/orchid.closure_regression.ex"
   @real_goal_runner_path "lib/mix/tasks/orchid.real_goal_closure.ex"
 
@@ -138,7 +139,9 @@ defmodule Mix.Tasks.Orchid.ClosureRegression do
     closed_count = integer_value(Map.get(report, "closed_count")) || count_closed(goals)
     own_external_success_checks = own_external_success_checks?(goals, total)
 
-    pass = total == 3 and closed_count == 3 and own_external_success_checks
+    pass =
+      total == @flat_goal_total and closed_count == @flat_goal_total and
+        own_external_success_checks
 
     %{
       "closed_count" => closed_count,
@@ -240,10 +243,10 @@ defmodule Mix.Tasks.Orchid.ClosureRegression do
       end)
 
     cond do
-      total != 3 ->
-        "flat_total_mismatch: expected 3 goals, got #{total}"
+      total != @flat_goal_total ->
+        "flat_total_mismatch: expected #{@flat_goal_total} goals, got #{total}"
 
-      closed_count != 3 ->
+      closed_count != @flat_goal_total ->
         "flat_goal_closure_regression: #{Jason.encode!(failed_goals)}"
 
       not own_external_success_checks ->
@@ -272,7 +275,7 @@ defmodule Mix.Tasks.Orchid.ClosureRegression do
   defp count_closed(goals), do: Enum.count(goals, &(&1["closed"] == true))
 
   defp exception_report(suite_key, reason) do
-    expected_total = if suite_key == :real, do: 3, else: 1
+    expected_total = if suite_key == :real, do: @flat_goal_total, else: 1
     failure_mode = "harness_exception: #{format_reason(reason)}"
 
     %{

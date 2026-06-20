@@ -716,7 +716,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
 
   defp criteria(:real, goals, closed_count, _gvr_closed_count) do
     %{
-      ran_all_3: length(goals) == 3,
+      ran_all_4: length(goals) == 4,
       at_least_1_closed_with_zero_nudges:
         closed_count >= 1 and Enum.any?(goals, &(&1.closed and &1.nudges == 0)),
       all_success_checks_external: true
@@ -853,6 +853,46 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
           %{
             path: "data/status.txt",
             content: "state=open\n"
+          }
+        ]
+      },
+      %{
+        id: "echo_multifile",
+        project_name: "Real Goal Echo Multifile",
+        objective: "Create two text files with exact contents.",
+        project_brief: """
+        Real external goal echo.
+        The accepted final state is two workspace files at notes/echo-left.txt
+        and notes/echo-right.txt containing exactly the requested text.
+        """,
+        goal_name: "Close echo multifile text",
+        goal_description: """
+        Use the product worker path to close this task.
+
+        Create exactly one Shell Operator child goal. The child goal must create
+        /workspace/notes/echo-left.txt with exactly this line:
+        orchid-echo-left
+
+        The child goal must also create /workspace/notes/echo-right.txt with
+        exactly this line:
+        orchid-echo-right
+
+        The child goal must run:
+        cd /workspace && test -f notes/echo-left.txt && test -f notes/echo-right.txt && printf 'orchid-echo-left\\n' | cmp -s notes/echo-left.txt - && printf 'orchid-echo-right\\n' | cmp -s notes/echo-right.txt -
+
+        The child goal must call task_report_result with outcome "success",
+        mark_completed true, and command evidence.
+
+        When the child goal is completed, call task_report_result for this
+        parent goal with outcome "success", mark_completed true, and include the
+        child goal id plus the cmp result. Do not create extra child goals.
+        """,
+        success_check:
+          "cd /workspace && test -f notes/echo-left.txt && test -f notes/echo-right.txt && printf 'orchid-echo-left\\n' | cmp -s notes/echo-left.txt - && printf 'orchid-echo-right\\n' | cmp -s notes/echo-right.txt -",
+        seed_files: [
+          %{
+            path: "README.md",
+            content: "Real goal echo: create two notes/echo text files.\n"
           }
         ]
       }
