@@ -33,6 +33,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       OptionParser.parse(args,
         strict: [
           out: :string,
+          goal_id: :string,
           goal_timeout_ms: :integer,
           success_timeout_ms: :integer,
           keep_data_dir: :boolean
@@ -44,6 +45,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     repo_cwd = File.cwd!()
     output_path = opts |> Keyword.get(:out, suite.default_out) |> validate_output_path!()
     output_file = Path.expand(output_path, repo_cwd)
+    goal_id = Keyword.get(opts, :goal_id)
 
     goal_timeout_ms =
       opts
@@ -73,7 +75,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
         seed_facts!()
         force_closure_model_templates!()
 
-        definitions = suite.goals
+        definitions = select_goal_definitions!(suite.goals, goal_id)
 
         goals =
           Enum.map(definitions, fn definition ->
@@ -98,7 +100,8 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
             output_file,
             started_at,
             suite,
-            reliability_retry_limit
+            reliability_retry_limit,
+            goal_id
           )
 
         write_report!(report, output_file)
@@ -532,7 +535,8 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
          output_path,
          started_at,
          suite,
-         reliability_retry_limit
+         reliability_retry_limit,
+         goal_id
        ) do
     closed_count = Enum.count(goals, & &1.closed)
     gvr_closed_count = gvr_closed_count(goals)
@@ -555,6 +559,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
         max_retries: reliability_retry_limit,
         retry_condition: "closed=false and reliability_failure=true"
       },
+      goal_filter: goal_filter(goal_id),
       n_goals: length(definitions),
       closed_count: closed_count,
       gvr_closed_count: gvr_closed_count,
@@ -563,6 +568,22 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       duration_ms: monotonic_ms() - started_at
     }
   end
+
+  defp select_goal_definitions!(definitions, nil), do: definitions
+
+  defp select_goal_definitions!(definitions, goal_id) do
+    case Enum.filter(definitions, &(&1.id == goal_id)) do
+      [] ->
+        valid_ids = definitions |> Enum.map(& &1.id) |> Enum.join(", ")
+        Mix.raise("unknown --goal-id #{inspect(goal_id)}; valid ids: #{valid_ids}")
+
+      selected ->
+        selected
+    end
+  end
+
+  defp goal_filter(nil), do: nil
+  defp goal_filter(goal_id), do: %{goal_id: goal_id}
 
   defp build_gvr_vs_flat_report(
          definition,
