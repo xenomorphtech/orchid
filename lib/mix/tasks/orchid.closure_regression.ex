@@ -150,6 +150,7 @@ defmodule Mix.Tasks.Orchid.ClosureRegression do
       "failure_mode" =>
         flat_failure_mode(pass, total, closed_count, goals, own_external_success_checks),
       "own_external_success_checks" => own_external_success_checks,
+      "reliability_retry_policy" => Map.get(report, "reliability_retry_policy"),
       "goals" => goals
     }
   end
@@ -192,6 +193,10 @@ defmodule Mix.Tasks.Orchid.ClosureRegression do
       "failure_mode" => Map.get(goal, "failure_mode"),
       "reliability_failure" => Map.get(goal, "reliability_failure") == true,
       "status" => Map.get(goal, "status"),
+      "attempts_used" => integer_value(Map.get(goal, "attempts_used")),
+      "reliability_retry_limit" => integer_value(Map.get(goal, "reliability_retry_limit")),
+      "retried" => Map.get(goal, "retried") == true,
+      "attempts" => attempt_summaries(Map.get(goal, "attempts")),
       "project_id" => Map.get(goal, "project_id"),
       "goal_id" => Map.get(goal, "goal_id"),
       "workspace" => Map.get(goal, "workspace"),
@@ -201,6 +206,27 @@ defmodule Mix.Tasks.Orchid.ClosureRegression do
       "duration_ms" => Map.get(goal, "duration_ms")
     }
   end
+
+  defp attempt_summaries(attempts) when is_list(attempts),
+    do: Enum.map(attempts, &attempt_summary/1)
+
+  defp attempt_summaries(_), do: []
+
+  defp attempt_summary(%{} = attempt) do
+    %{
+      "attempt" => integer_value(Map.get(attempt, "attempt")),
+      "closed" => Map.get(attempt, "closed") == true,
+      "route_mode" => Map.get(attempt, "route_mode"),
+      "failure_mode" => Map.get(attempt, "failure_mode"),
+      "reliability_failure" => Map.get(attempt, "reliability_failure") == true,
+      "status" => Map.get(attempt, "status"),
+      "model_calls" => Map.get(attempt, "model_calls"),
+      "watcher_checks" => Map.get(attempt, "watcher_checks"),
+      "duration_ms" => Map.get(attempt, "duration_ms")
+    }
+  end
+
+  defp attempt_summary(_), do: %{}
 
   defp success_check_summary(%{} = success_check) do
     %{
@@ -237,6 +263,8 @@ defmodule Mix.Tasks.Orchid.ClosureRegression do
         %{
           "id" => goal["id"],
           "closed" => goal["closed"],
+          "attempts_used" => goal["attempts_used"],
+          "retried" => goal["retried"],
           "success_check_passed" => get_in(goal, ["success_check", "passed"]) == true,
           "failure_mode" => goal["failure_mode"]
         }

@@ -15,6 +15,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
   @default_goal_timeout_ms 720_000
   @default_success_timeout_ms 30_000
   @default_gvr_retry_attempts 2
+  @default_reliability_retry_attempts 2
   @poll_interval_ms 5_000
   @completion_grace_ms 120_000
   @free_provider :openrouter
@@ -54,6 +55,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       |> Keyword.get(:success_timeout_ms, @default_success_timeout_ms)
       |> validate_positive_integer!("--success-timeout-ms")
 
+    reliability_retry_limit = suite_reliability_retry_limit(suite.key)
     keep_data_dir? = Keyword.get(opts, :keep_data_dir, false)
     data_dir = temp_data_dir()
     started_at = monotonic_ms()
@@ -76,11 +78,29 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
         goals =
           Enum.map(definitions, fn definition ->
             File.cd!(repo_cwd)
-            run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd)
+
+            run_goal_with_reliability_retries(
+              definition,
+              goal_timeout_ms,
+              success_timeout_ms,
+              repo_cwd,
+              reliability_retry_limit
+            )
           end)
 
         File.cd!(repo_cwd)
-        report = build_report(goals, definitions, data_dir, output_file, started_at, suite)
+
+        report =
+          build_report(
+            goals,
+            definitions,
+            data_dir,
+            output_file,
+            started_at,
+            suite,
+            reliability_retry_limit
+          )
+
         write_report!(report, output_file)
         report
       after
@@ -213,6 +233,65 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     )
   end
 
+  defp run_goal_with_reliability_retries(
+         definition,
+         goal_timeout_ms,
+         success_timeout_ms,
+         repo_cwd,
+         max_retries,
+         route_mode \\ :auto
+       ) do
+    attempts =
+      do_run_goal_with_reliability_retries(
+        definition,
+        goal_timeout_ms,
+        success_timeout_ms,
+        repo_cwd,
+        route_mode,
+        max_retries,
+        []
+      )
+
+    attempts
+    |> List.last()
+    |> annotate_goal_attempts(attempts, max_retries)
+  end
+
+  defp do_run_goal_with_reliability_retries(
+         definition,
+         goal_timeout_ms,
+         success_timeout_ms,
+         repo_cwd,
+         route_mode,
+         retries_remaining,
+         attempts
+       ) do
+    result = run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd, route_mode)
+    attempts = attempts ++ [result]
+
+    cond do
+      result.closed ->
+        attempts
+
+      not result.reliability_failure ->
+        attempts
+
+      retries_remaining <= 0 ->
+        attempts
+
+      true ->
+        do_run_goal_with_reliability_retries(
+          definition,
+          goal_timeout_ms,
+          success_timeout_ms,
+          repo_cwd,
+          route_mode,
+          retries_remaining - 1,
+          attempts
+        )
+    end
+  end
+
   defp run_gvr_with_retries(
          definition,
          goal_timeout_ms,
@@ -246,7 +325,26 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     end
   end
 
-  defp run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd, route_mode \\ :auto) do
+  defp annotate_goal_attempts(result, attempts, max_retries) do
+    attempts_used = length(attempts)
+
+    result
+    |> Map.put(:attempts_used, attempts_used)
+    |> Map.put(:reliability_retry_limit, max_retries)
+    |> Map.put(:retried, attempts_used > 1)
+    |> Map.put(
+      :attempts,
+      attempts
+      |> Enum.with_index(1)
+      |> Enum.map(fn {attempt, index} ->
+        attempt
+        |> arm_summary()
+        |> Map.put(:attempt, index)
+      end)
+    )
+  end
+
+  defp run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd, route_mode) do
     started_at = monotonic_ms()
 
     case create_fixture(definition) do
@@ -498,7 +596,15 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     }
   end
 
-  defp build_report(goals, definitions, data_dir, output_path, started_at, suite) do
+  defp build_report(
+         goals,
+         definitions,
+         data_dir,
+         output_path,
+         started_at,
+         suite,
+         reliability_retry_limit
+       ) do
     closed_count = Enum.count(goals, & &1.closed)
     gvr_closed_count = gvr_closed_count(goals)
 
@@ -514,6 +620,10 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       model: "openrouter/#{Orchid.LLM.Catalog.resolve_model(@free_model, @free_provider)}",
       data_dir: data_dir,
       report_path: output_path,
+      reliability_retry_policy: %{
+        max_retries: reliability_retry_limit,
+        retry_condition: "closed=false and reliability_failure=true"
+      },
       n_goals: length(definitions),
       closed_count: closed_count,
       gvr_closed_count: gvr_closed_count,
@@ -595,6 +705,9 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       reliability_failure: result.reliability_failure,
       route_mode: result.route_mode,
       status: result.status,
+      attempts_used: Map.get(result, :attempts_used),
+      reliability_retry_limit: Map.get(result, :reliability_retry_limit),
+      retried: Map.get(result, :retried),
       project_id: Map.get(result, :project_id),
       goal_id: Map.get(result, :goal_id),
       workspace: Map.get(result, :workspace),
@@ -691,6 +804,9 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       File.cd!(repo_cwd)
     end
   end
+
+  defp suite_reliability_retry_limit(:real), do: @default_reliability_retry_attempts
+  defp suite_reliability_retry_limit(_suite_key), do: 0
 
   defp suite_config!(:real) do
     %{
