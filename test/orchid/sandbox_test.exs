@@ -3,6 +3,7 @@ defmodule Orchid.SandboxTest do
 
   alias Orchid.{Sandbox, Project}
 
+  @moduletag :external
   @moduletag timeout: 120_000
 
   setup do
