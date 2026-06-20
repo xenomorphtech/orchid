@@ -1,0 +1,87 @@
+{
+  "closed_count": 1,
+  "criteria": {
+    "all_goals_routed_gvr": true,
+    "all_route_inputs_match_runtime_goal": true,
+    "all_success_checks_external": true,
+    "at_least_1_gvr_closed_with_zero_nudges": true
+  },
+  "data_dir": "/tmp/orchid-real-goal-closure-1781944048240873937-2501",
+  "duration_ms": 110163,
+  "generated_at": "2026-06-20T08:29:18.404873Z",
+  "goals": [
+    {
+      "active_agents": [
+        {
+          "id": "nTBqq4O2FiQ",
+          "last_assistant_message": "",
+          "model": "nex_n2_pro",
+          "planner_mode": "gvr",
+          "provider": "openrouter",
+          "status": "{:executing_tool, \"task_report_result\"}",
+          "use_orchid_tools": true
+        }
+      ],
+      "blocker": null,
+      "closed": true,
+      "closed_by_status": true,
+      "duration_ms": 110102,
+      "failure_mode": null,
+      "goal_id": "Qua2FDHk6bQ9ABb1",
+      "goals": [
+        {
+          "agent_id": "afRBMcx6a-Y",
+          "completion_summary": "Updated /workspace/config/stages.txt to exactly `build\\ntest\\ndeploy\\n`. Verification command exited 0.",
+          "id": "3VqKczS5omZbRjgs",
+          "last_error": null,
+          "name": "Refactor stages dependency order",
+          "parent_goal_id": "Qua2FDHk6bQ9ABb1",
+          "report": "Command run:\ncd /workspace && test -f config/stages.txt && printf 'build\\ntest\\ndeploy\\n' | cmp -s config/stages.txt -; status=$?; echo \"exit_status=$status\"; exit $status\n\nOutput:\nexit_status=0\n\nExit status: 0",
+          "status": "completed",
+          "task_outcome": "success"
+        },
+        {
+          "agent_id": "nTBqq4O2FiQ",
+          "completion_summary": "Parent goal completed: child goal 3VqKczS5omZbRjgs was already completed; /workspace/config/stages.txt matches required order.",
+          "id": "Qua2FDHk6bQ9ABb1",
+          "last_error": null,
+          "name": "Close delta dependency order refactor",
+          "parent_goal_id": null,
+          "report": "Live state confirmed via goal_list. Existing child goal 3VqKczS5omZbRjgs was already completed and its description required the exact verification command: cd /workspace && test -f config/stages.txt && printf 'build\\ntest\\ndeploy\\n' | cmp -s config/stages.txt -. Workspace inspection showed /workspace/config/stages.txt already contains exactly the three ordered lines: build, test, deploy. No extra child goals were created.",
+          "status": "completed",
+          "task_outcome": "success"
+        }
+      ],
+      "id": "delta_dependency_order_refactor",
+      "model_calls": 21,
+      "nudges": 0,
+      "project_id": "N6D75YUhMxi1CmXX",
+      "reliability_failure": false,
+      "route": {
+        "goal_label": "Qua2FDHk6bQ9ABb1",
+        "mode": "gvr",
+        "route_input_matches_runtime_goal": true,
+        "signal": "objective_markers=constraint,refactor,ordering,sequence,dependency; objective_words=137; max_steps=8; success_check=shell"
+      },
+      "route_mode": "gvr",
+      "status": "ok",
+      "success_check": {
+        "command": "cd /workspace && test -f config/stages.txt && printf 'build\\ntest\\ndeploy\\n' | cmp -s config/stages.txt -",
+        "output": "",
+        "passed": true
+      },
+      "watcher_checks": 1,
+      "workspace": "/tmp/orchid-real-goal-closure-1781944048240873937-2501/projects/N6D75YUhMxi1CmXX/files"
+    }
+  ],
+  "gvr_closed_count": 1,
+  "harness": "Mix.Tasks.Orchid.GvrRealGoalClosure",
+  "harness_path": "lib/mix/tasks/orchid.gvr_real_goal_closure.ex",
+  "implementation_path": "lib/mix/tasks/orchid.real_goal_closure.ex",
+  "model": "openrouter/nex-agi/nex-n2-pro:free",
+  "n_goals": 1,
+  "product_entry": "Orchid.GoalWatcher",
+  "report_path": "/home/sdancer/orchid-widen-suite/priv/autonomy/gvr_real_goal_closure.json",
+  "route_contract": "GoalWatcher.runtime_planner_request -> RuntimeGoal.from_goal_watcher -> Router -> planner",
+  "runner_substrate": "durable per-project sandbox via Orchid.Projects.ensure_sandbox"
+}
