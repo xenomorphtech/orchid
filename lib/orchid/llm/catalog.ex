@@ -40,6 +40,12 @@ defmodule Orchid.LLM.Catalog do
       contexts: [:template, :decomp]
     },
     %{
+      id: :gpt55,
+      label: "GPT 5.5",
+      providers: %{codex: "gpt-5.5", codex_http: "gpt-5.5"},
+      contexts: [:template, :decomp]
+    },
+    %{
       id: :gpt53,
       label: "GPT 5.3",
       providers: %{codex: "gpt-5.3-codex", codex_http: "gpt-5.3-codex"},

@@ -130,7 +130,7 @@ defmodule Orchid.LLM.Codex do
                    container,
                    "sh",
                    "-lc",
-                   "node #{shell_escape(container_runner_path())} #{shell_escape(remote_request)}; status=$?; rm -f #{shell_escape(remote_request)}; rm -rf #{shell_escape(remote_home)}; exit $status"
+                   container_codex_command(remote_request, remote_home)
                  ],
                  stderr_to_stdout: true
                ) do
@@ -210,6 +210,17 @@ defmodule Orchid.LLM.Codex do
     "'#{escaped}'"
   end
 
+  defp container_codex_command(remote_request, remote_home) do
+    request = shell_escape(remote_request)
+    home = shell_escape(remote_home)
+
+    "node #{shell_escape(container_runner_path())} #{request}; " <>
+      "status=$?; rm -f #{request}; " <>
+      "case #{home} in /tmp/orchid-codex-home-*) rm -rf #{home};; " <>
+      "*) echo 'refusing to remove unexpected CODEX_HOME path: #{remote_home}' >&2; exit 98;; esac; " <>
+      "exit $status"
+  end
+
   defp host_env(config) do
     []
     |> maybe_put_env("CODEX_HOME", orchestrator_codex_home(config))
@@ -269,6 +280,7 @@ defmodule Orchid.LLM.Codex do
     |> put_present("skipGitRepoCheck", skip_git_repo_check?(config))
     |> put_present("approvalPolicy", approval_policy_for(config))
     |> put_present("sandboxMode", sandbox_mode_for(config))
+    |> put_present("bypassApprovalsAndSandbox", bypass_approvals_and_sandbox?(config))
     |> put_present("configOverrides", config_overrides_for(config))
   end
 
@@ -312,6 +324,10 @@ defmodule Orchid.LLM.Codex do
 
   defp sandbox_mode_for(config) do
     if run_in_container?(config), do: "danger-full-access", else: "workspace-write"
+  end
+
+  defp bypass_approvals_and_sandbox?(config) do
+    if run_in_container?(config), do: true, else: nil
   end
 
   defp config_overrides_for(config) do
@@ -372,7 +388,7 @@ defmodule Orchid.LLM.Codex do
           fun.(remote_home)
         end
       after
-        File.rm_rf(local_home)
+        safe_rm_rf_temp!(local_home, "orchid-codex-home-")
       end
     end)
   end
@@ -494,11 +510,26 @@ defmodule Orchid.LLM.Codex do
     real_home = System.get_env("CODEX_HOME") || Path.expand("~/.codex")
 
     if File.dir?(real_home) do
-      real_home
-      |> File.ls!()
+      ~w(auth.json installation_id version.json)
       |> Enum.each(fn entry ->
-        File.cp_r!(Path.join(real_home, entry), Path.join(home, entry))
+        source = Path.join(real_home, entry)
+
+        if File.regular?(source) do
+          File.cp!(source, Path.join(home, entry))
+        end
       end)
+    end
+  end
+
+  defp safe_rm_rf_temp!(path, prefix) when is_binary(path) and is_binary(prefix) do
+    expanded = Path.expand(path)
+    tmp = System.tmp_dir!() |> Path.expand()
+    base = Path.basename(expanded)
+
+    if String.starts_with?(expanded, tmp <> "/") and String.starts_with?(base, prefix) do
+      File.rm_rf(expanded)
+    else
+      Logger.error("Refusing to remove unexpected Codex temp path: #{expanded}")
     end
   end
 
