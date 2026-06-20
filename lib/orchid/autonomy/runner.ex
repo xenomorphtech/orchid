@@ -11,6 +11,7 @@ defmodule Orchid.Autonomy.Runner do
   """
 
   alias Orchid.Autonomy.{Benchmark, Runtime, Scorer}
+  alias Orchid.LLM.Catalog
   alias Orchid.{Agent, Goals, Object, Planner, Project, Projects, Sandbox, Tool}
 
   @type step :: %{
@@ -108,6 +109,29 @@ defmodule Orchid.Autonomy.Runner do
   end
 
   def cleanup(_run_result), do: :ok
+
+  @doc false
+  def planner_llm_metadata(opts \\ []) do
+    config =
+      @planner_llm_config
+      |> Map.merge(normalize_config(Keyword.get(opts, :agent_config, %{})))
+      |> Map.merge(normalize_config(Keyword.get(opts, :gvr_llm_config, %{})))
+
+    provider = Map.get(config, :provider)
+    model_id = Map.get(config, :model)
+    model = Catalog.resolve_model(model_id, provider)
+
+    %{
+      provider: to_string(provider),
+      model_id: to_string(model_id),
+      model: model,
+      model_proof: "provider=#{provider} model=#{model}"
+    }
+  end
+
+  defp normalize_config(config) when is_list(config), do: Map.new(config)
+  defp normalize_config(config) when is_map(config), do: config
+  defp normalize_config(_config), do: %{}
 
   defp validate_max_steps(max_steps) when is_integer(max_steps) and max_steps > 0, do: :ok
   defp validate_max_steps(max_steps), do: {:error, {:invalid_max_steps, max_steps}}
@@ -436,6 +460,13 @@ defmodule Orchid.Autonomy.Runner do
         planner_opts = gvr_planner_opts(project_id, context, opts)
 
         case Planner.plan_tasks(objective, Sandbox.status(project_id), planner_opts) do
+          {:ok, []} ->
+            {{:ok, "G-V-R planner reached terminal state with no remaining tasks."},
+             add_gvr_message(
+               state,
+               "G-V-R planner reached terminal state with no remaining tasks."
+             )}
+
           {:ok, tasks} ->
             case execute_gvr_tasks(
                    tasks,

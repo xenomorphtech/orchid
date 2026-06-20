@@ -65,6 +65,12 @@ defmodule Orchid.Planner do
         _ -> []
       end)
 
+    terminal =
+      Enum.flat_map(results, fn
+        {:terminal, reason} -> [reason]
+        _ -> []
+      end)
+
     best_effort =
       Enum.flat_map(results, fn
         {:flawed, tasks, critique} when is_list(tasks) and tasks != [] ->
@@ -77,18 +83,22 @@ defmodule Orchid.Planner do
           []
       end)
 
-    case {approved, best_effort} do
-      {[], [{status, tasks, reason} | _rest]} ->
+    case {approved, terminal, best_effort} do
+      {[], [reason | _rest], _best_effort} ->
+        Logger.info("[GVR] generator: terminal empty task array: #{truncate(reason, 240)}")
+        {:ok, []}
+
+      {[], [], [{status, tasks, reason} | _rest]} ->
         Logger.info(
           "[GVR] verifier: executing best-effort #{best_effort_label(status)} plan with no approved path: #{truncate(reason, 240)}"
         )
 
         {:ok, tasks}
 
-      {[], []} ->
+      {[], [], []} ->
         {:error, rejected_summary(results)}
 
-      {[{tasks, reason} | _rest], _} ->
+      {[{tasks, reason} | _rest], _terminal, _best_effort} ->
         Logger.info("[GVR] verifier: approved structured plan: #{truncate(reason, 240)}")
         {:ok, tasks}
     end
@@ -133,6 +143,16 @@ defmodule Orchid.Planner do
       |> Keyword.put(:revision_feedback, feedback)
 
     case Generator.generate(objective, completed_tasks, attempt_opts) do
+      {:ok, []} ->
+        handle_empty_task_array(
+          objective,
+          completed_tasks,
+          plan_opts,
+          verifier_opts,
+          feedback,
+          attempt
+        )
+
       {:ok, tasks} ->
         verify_revision(
           objective,
@@ -163,6 +183,50 @@ defmodule Orchid.Planner do
         else
           {:error, retry_summary(next_feedback)}
         end
+    end
+  end
+
+  defp handle_empty_task_array(
+         objective,
+         completed_tasks,
+         plan_opts,
+         verifier_opts,
+         feedback,
+         attempt
+       ) do
+    max_iterations = Keyword.fetch!(plan_opts, :max_iterations)
+    path_index = Keyword.fetch!(plan_opts, :path_index)
+    path_count = Keyword.fetch!(plan_opts, :path_count)
+
+    if completed_tasks == [] do
+      reason = "task array was empty before any G-V-R task completed"
+
+      Logger.info(
+        "[GVR] generator path #{path_index}/#{path_count} attempt #{attempt}/#{max_iterations}: initial empty task array:\n#{reason}"
+      )
+
+      next_feedback = feedback ++ [generator_feedback(attempt, reason)]
+
+      if attempt < max_iterations do
+        revise_until_approved(
+          objective,
+          completed_tasks,
+          plan_opts,
+          verifier_opts,
+          next_feedback,
+          attempt + 1
+        )
+      else
+        {:error, retry_summary(next_feedback)}
+      end
+    else
+      reason = "no remaining tasks after #{length(completed_tasks)} completed G-V-R task(s)"
+
+      Logger.info(
+        "[GVR] generator path #{path_index}/#{path_count} attempt #{attempt}/#{max_iterations}: terminal empty task array:\n#{reason}"
+      )
+
+      {:terminal, reason}
     end
   end
 
@@ -313,6 +377,7 @@ defmodule Orchid.Planner do
   end
 
   defp normalize_path_result({:ok, {:approved, tasks, reason}}), do: {:approved, tasks, reason}
+  defp normalize_path_result({:ok, {:terminal, reason}}), do: {:terminal, reason}
   defp normalize_path_result({:ok, {:flawed, tasks, critique}}), do: {:flawed, tasks, critique}
 
   defp normalize_path_result({:ok, {:unverified, tasks, reason}}),

@@ -1,0 +1,340 @@
+{
+  "status": "complete",
+  "provider": "codex",
+  "runner_mode": "flat",
+  "model_id": "gpt55",
+  "model": "gpt-5.5",
+  "model_proof": "provider=codex model=gpt-5.5",
+  "benchmark_count": 3,
+  "benchmarks": [
+    {
+      "id": "budget_constrained_build_order",
+      "category": "development",
+      "samples": [
+        {
+          "status": "closed",
+          "run": 1,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 0,
+            "runner_mode": "flat",
+            "project_id": "SW5AAoX5XDJs-6H0",
+            "agent_id": "7o7PmfVwZMY",
+            "recovered": [],
+            "steps": [],
+            "goal_id": "cweXyKlQbHGE4FU3",
+            "turn_result": "ok",
+            "duration_ms": 43618,
+            "last_assistant_message": "Implemented the release-manifest pipeline in dependency order.\n\nFiles changed:\n- `lib/build_order/04_parser.ex`\n- `lib/build_order/03_rules.ex`\n- `lib/build_order/01_validator.ex`\n- `lib/build_order/02_renderer.ex`\n- `lib/build_order/00_pipeline.ex`\n\nCommands run:\n- `mix test`\n- `mix test 2>&1 | grep -q '0 failures'`\n\nVerification passed: `1 test, 0 failures`, and the acceptance check exited successfully."
+          },
+          "runner_mode": "flat",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 0,
+            "goal_closure": true
+          }
+        },
+        {
+          "status": "closed",
+          "run": 2,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 0,
+            "runner_mode": "flat",
+            "project_id": "ZgVLWt7EA_bgQYqG",
+            "agent_id": "B54daQgdb-8",
+            "recovered": [],
+            "steps": [],
+            "goal_id": "xJNYYM1jUEa-45E8",
+            "turn_result": "ok",
+            "duration_ms": 50628,
+            "last_assistant_message": "Implemented the release-manifest pipeline in dependency order.\n\nFiles changed:\n- `/workspace/lib/build_order/04_parser.ex`\n- `/workspace/lib/build_order/03_rules.ex`\n- `/workspace/lib/build_order/01_validator.ex`\n- `/workspace/lib/build_order/02_renderer.ex`\n- `/workspace/lib/build_order/00_pipeline.ex`\n\nCommands run:\n- `mix test` passed: `1 test, 0 failures`\n- `mix test 2>&1 | grep -q '0 failures'` passed with exit code 0\n\nNote: `mix format --check-formatted` could not run because this seeded project has no `.formatter.exs` configuration."
+          },
+          "runner_mode": "flat",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 0,
+            "goal_closure": true
+          }
+        },
+        {
+          "status": "closed",
+          "run": 3,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 0,
+            "runner_mode": "flat",
+            "project_id": "EaNqpaxTeeg39nT8",
+            "agent_id": "z4HEG31oVYw",
+            "recovered": [],
+            "steps": [],
+            "goal_id": "Pak2l5jn-dArRgGB",
+            "turn_result": "ok",
+            "duration_ms": 52036,
+            "last_assistant_message": "Implemented the release-manifest pipeline in dependency order.\n\nFiles changed:\n`lib/build_order/04_parser.ex`, `03_rules.ex`, `01_validator.ex`, `02_renderer.ex`, `00_pipeline.ex`\n\nCommands run:\n`mix test`\n`mix test 2>&1 | grep -q '0 failures'`\n\nResult: acceptance check passed with exit code 0."
+          },
+          "runner_mode": "flat",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 0,
+            "goal_closure": true
+          }
+        }
+      ],
+      "objective": "Complete the seeded Mix project in `/workspace` under a tight budget. The files\nare named in a misleading order; do not work from the top of the listing.\nRead the dependency notes and implement the release-manifest pipeline in\ntopological order: Parser and Rules first, then Validator and Renderer, then\nPipeline. The single integration test must pass.\n",
+      "max_steps": 28,
+      "success_check": {
+        "command": "cd /workspace && mix test 2>&1 | grep -q '0 failures'",
+        "type": "shell"
+      },
+      "seed_files": [
+        "mix.exs",
+        "README.md",
+        "lib/build_order/00_pipeline.ex",
+        "lib/build_order/01_validator.ex",
+        "lib/build_order/02_renderer.ex",
+        "lib/build_order/03_rules.ex",
+        "lib/build_order/04_parser.ex",
+        "test/test_helper.exs",
+        "test/build_order_pipeline_test.exs"
+      ],
+      "recovery_checks": [],
+      "goal_closure_rate": 1.0,
+      "median_score": {
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "runner_mode": "flat"
+    },
+    {
+      "id": "garden_path_diagnosis",
+      "category": "operation",
+      "samples": [
+        {
+          "status": "closed",
+          "run": 1,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 0,
+            "runner_mode": "flat",
+            "project_id": "MnwwWn53wxoBf4wJ",
+            "agent_id": "QL7AqauvVfw",
+            "recovered": [],
+            "steps": [],
+            "goal_id": "1I7dFAXa_1zU1QP4",
+            "turn_result": "ok",
+            "duration_ms": 35607,
+            "last_assistant_message": "Completed. The acceptance check passed.\n\nFiles changed:\n- `config/auth.env`: set `TOKEN_AUDIENCE=orchid-api`\n- `ops/diagnosis.txt`: recorded root cause, rejected cache hypothesis, and verification evidence\n\nCommand run:\n- The exact acceptance `grep`/`test` check from `/workspace`, which exited `0`."
+          },
+          "runner_mode": "flat",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 0,
+            "goal_closure": true
+          }
+        },
+        {
+          "status": "closed",
+          "run": 2,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 0,
+            "runner_mode": "flat",
+            "project_id": "q453pzZhFiaJoCpX",
+            "agent_id": "QbUe3uq6VIY",
+            "recovered": [],
+            "steps": [],
+            "goal_id": "U0YolI4yutGkr1CS",
+            "turn_result": "ok",
+            "duration_ms": 42842,
+            "last_assistant_message": "Done. The acceptance check passed.\n\nFiles changed:\n- `config/auth.env`: set `TOKEN_AUDIENCE=orchid-api`\n- `ops/diagnosis.txt`: recorded root cause, rejected cache hypothesis, and verification evidence\n\nCommands run:\n- Inspected README, config, logs, and existing diagnosis with `sed`/`rg`\n- Ran the provided acceptance `grep`/`test` check successfully"
+          },
+          "runner_mode": "flat",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 0,
+            "goal_closure": true
+          }
+        },
+        {
+          "status": "closed",
+          "run": 3,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 0,
+            "runner_mode": "flat",
+            "project_id": "pVjF1OHWfPc0rsSk",
+            "agent_id": "Vg9BKrxG2Y8",
+            "recovered": [],
+            "steps": [],
+            "goal_id": "G3GbvOcIJ6sPYJ1i",
+            "turn_result": "ok",
+            "duration_ms": 35714,
+            "last_assistant_message": "Completed. The acceptance check passed.\n\nFiles changed:\n- `/workspace/config/auth.env`: set `TOKEN_AUDIENCE=orchid-api`\n- `/workspace/ops/diagnosis.txt`: documented root cause, rejected cache hypothesis, and verification evidence\n\nCommands run:\n- Inspected README, config, logs, and existing diagnosis file\n- Ran the provided grep-based acceptance check successfully"
+          },
+          "runner_mode": "flat",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 0,
+            "goal_closure": true
+          }
+        }
+      ],
+      "objective": "Diagnose the seeded API incident in `/workspace`. The README contains a\nplausible cache-size hypothesis, but you must verify it against the logs before\nchanging config. Apply only the actual fix, preserve unrelated cache settings,\nand write `ops/diagnosis.txt` with the root cause, rejected hypothesis, and\nverification evidence.\n",
+      "max_steps": 24,
+      "success_check": {
+        "command": "cd /workspace &&\ngrep -q '^TOKEN_AUDIENCE=orchid-api$' config/auth.env &&\ngrep -q '^JWKS_CACHE_TTL_SECONDS=300$' config/auth.env &&\ngrep -q '^CACHE_SIZE_MB=64$' config/cache.env &&\ngrep -q '^CACHE_EVICTION=lfu$' config/cache.env &&\ntest -f ops/diagnosis.txt &&\ngrep -Eiq '^root_cause:.*token audience.*(mobile|orchid-api)' ops/diagnosis.txt &&\ngrep -Eiq '^rejected_hypothesis:.*cache' ops/diagnosis.txt &&\ngrep -Eiq '^verification:.*(invalid_audience|401|orchid-api)' ops/diagnosis.txt\n",
+        "type": "shell"
+      },
+      "seed_files": [
+        "README.md",
+        "config/cache.env",
+        "config/auth.env",
+        "logs/dashboard.log",
+        "logs/api.log",
+        "ops/diagnosis.txt"
+      ],
+      "recovery_checks": [],
+      "goal_closure_rate": 1.0,
+      "median_score": {
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "runner_mode": "flat"
+    },
+    {
+      "id": "oscillating_constraint_refactor",
+      "category": "development",
+      "samples": [
+        {
+          "status": "closed",
+          "run": 1,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 0,
+            "runner_mode": "flat",
+            "project_id": "7AauWk0xFMv3hjlp",
+            "agent_id": "Ci2T6-oSm0Y",
+            "recovered": [],
+            "steps": [],
+            "goal_id": "QdpKZdYtmFpiaA93",
+            "turn_result": "ok",
+            "duration_ms": 57952,
+            "last_assistant_message": "Implemented the refactor in `/workspace`.\n\nFiles changed:\n- `lib/plan_sync/contract.ex`\n- `lib/plan_sync/billing_payload.ex`\n- `lib/plan_sync/warehouse_event.ex`\n\nWhat changed:\n- `PlanSync.Contract` now returns a shared contract struct with separate `billing_plan_code` and `warehouse_plan_code` fields.\n- Billing uses `premium`, warehouse uses `pro`, while paid-plan pricing, seats, seat band, and billable status stay centralized.\n\nCommands run:\n- `mix test`\n- `mix test 2>&1 | grep -q '0 failures'`\n\nAcceptance check passed."
+          },
+          "runner_mode": "flat",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 0,
+            "goal_closure": true
+          }
+        },
+        {
+          "status": "closed",
+          "run": 2,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 0,
+            "runner_mode": "flat",
+            "project_id": "-QrqcfP9IOvK0DAA",
+            "agent_id": "3k7-xjs6UgU",
+            "recovered": [],
+            "steps": [],
+            "goal_id": "DlAeBsD9Xc8ayLbI",
+            "turn_result": "ok",
+            "duration_ms": 46973,
+            "last_assistant_message": "Implemented the shared contract refactor and verified the benchmark check passes.\n\nFiles changed:\n- `lib/plan_sync/contract.ex`\n- `lib/plan_sync/billing_payload.ex`\n- `lib/plan_sync/warehouse_event.ex`\n\nCommands run:\n- `mix test`\n- `mix test 2>&1 | grep -q '0 failures'`\n\nResult: `2 tests, 0 failures`; acceptance check exited successfully."
+          },
+          "runner_mode": "flat",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 0,
+            "goal_closure": true
+          }
+        },
+        {
+          "status": "closed",
+          "run": 3,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 0,
+            "runner_mode": "flat",
+            "project_id": "SFrQ0xm1cRgntrHG",
+            "agent_id": "A8Z_qTgoMzg",
+            "recovered": [],
+            "steps": [],
+            "goal_id": "CGmAlg1XCRm373V6",
+            "turn_result": "ok",
+            "duration_ms": 54112,
+            "last_assistant_message": "Implemented the shared contract refactor.\n\nChanged files:\n- `lib/plan_sync/contract.ex`\n- `lib/plan_sync/billing_payload.ex`\n- `lib/plan_sync/warehouse_event.ex`\n\nWhat changed:\n- `PlanSync.Contract` now canonicalizes paid plans to an internal `\"paid\"` value.\n- Billing uses `Contract.billing_plan_code/1` and emits `\"premium\"`.\n- Warehouse uses `Contract.warehouse_plan_code/1` and emits `\"pro\"`.\n- Paid-plan amount, seats, seat band, and billable status are defined centrally.\n\nCommands run:\n- `mix test`\n- `mix test 2>&1 | grep -q '0 failures'`\n\nAcceptance check passed."
+          },
+          "runner_mode": "flat",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 0,
+            "goal_closure": true
+          }
+        }
+      ],
+      "objective": "Repair the seeded plan-sync Mix project in `/workspace`. The billing payload\nand warehouse event need different external plan codes for the same paid-plan\ncontract. Do not chase one failing test at a time by flipping strings in the\nboundary modules; refactor the shared `PlanSync.Contract` so both tests pass\ntogether.\n",
+      "max_steps": 26,
+      "success_check": {
+        "command": "cd /workspace && mix test 2>&1 | grep -q '0 failures'",
+        "type": "shell"
+      },
+      "seed_files": [
+        "mix.exs",
+        "README.md",
+        "lib/plan_sync/contract.ex",
+        "lib/plan_sync/billing_payload.ex",
+        "lib/plan_sync/warehouse_event.ex",
+        "test/test_helper.exs",
+        "test/billing_payload_test.exs",
+        "test/warehouse_event_test.exs"
+      ],
+      "recovery_checks": [],
+      "goal_closure_rate": 1.0,
+      "median_score": {
+        "recovery_rate": 0.0,
+        "unattended_depth": 0
+      },
+      "runner_mode": "flat"
+    }
+  ],
+  "categories": {
+    "development": {
+      "goal_closure_rate": 1.0,
+      "benchmark_count": 2,
+      "recovery_rate": 0.0,
+      "unattended_depth": 0.0,
+      "recovery_injected_count": 0,
+      "recovery_recovered_count": 0
+    },
+    "operation": {
+      "goal_closure_rate": 1.0,
+      "benchmark_count": 1,
+      "recovery_rate": 0.0,
+      "unattended_depth": 0,
+      "recovery_injected_count": 0,
+      "recovery_recovered_count": 0
+    }
+  },
+  "generated_at": "2026-06-20T15:14:51.825769Z",
+  "runs_per_benchmark": 3,
+  "summary": {
+    "goal_closure_rate": 1.0,
+    "recovery_rate": 0.0,
+    "unattended_depth": 0,
+    "recovery_injected_count": 0,
+    "recovery_recovered_count": 0
+  }
+}

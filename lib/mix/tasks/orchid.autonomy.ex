@@ -152,11 +152,16 @@ defmodule Mix.Tasks.Orchid.Autonomy do
 
   defp build_report(benchmarks, runs, mode, runner_opts) do
     benchmark_reports = Enum.map(benchmarks, &benchmark_report(&1, runs, mode, runner_opts))
+    llm_metadata = Runner.planner_llm_metadata(runner_opts)
 
     %{
       generated_at: DateTime.utc_now() |> DateTime.to_iso8601(),
       status: suite_status(benchmark_reports),
       runner_mode: mode,
+      provider: llm_metadata.provider,
+      model_id: llm_metadata.model_id,
+      model: llm_metadata.model,
+      model_proof: llm_metadata.model_proof,
       runs_per_benchmark: runs,
       benchmark_count: length(benchmarks),
       benchmarks: benchmark_reports,

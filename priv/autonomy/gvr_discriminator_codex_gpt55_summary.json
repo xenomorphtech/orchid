@@ -1,0 +1,116 @@
+{
+  "generated_at": "2026-06-20T16:34:08Z",
+  "provider": "codex",
+  "model_id": "gpt55",
+  "model": "gpt-5.5",
+  "model_proof": "provider=codex model=gpt-5.5",
+  "no_openrouter_on_planner_path": true,
+  "reports": {
+    "flat": "priv/autonomy/gvr_discriminator_codex_gpt55_flat.json",
+    "gvr": "priv/autonomy/gvr_discriminator_codex_gpt55_gvr.json"
+  },
+  "runs_per_arm": 3,
+  "decisive_goals": [
+    "budget_constrained_build_order",
+    "oscillating_constraint_refactor"
+  ],
+  "control_goal": "garden_path_diagnosis",
+  "per_goal": {
+    "budget_constrained_build_order": {
+      "flat": {
+        "closure_rate": 1.0,
+        "statuses": [
+          "closed",
+          "closed",
+          "closed"
+        ],
+        "closed": [
+          true,
+          true,
+          true
+        ]
+      },
+      "gvr": {
+        "closure_rate": 0.0,
+        "statuses": [
+          "max_steps",
+          "max_steps",
+          "max_steps"
+        ],
+        "closed": [
+          false,
+          false,
+          false
+        ]
+      },
+      "delta_gvr_minus_flat": -1
+    },
+    "garden_path_diagnosis": {
+      "flat": {
+        "closure_rate": 1.0,
+        "statuses": [
+          "closed",
+          "closed",
+          "closed"
+        ],
+        "closed": [
+          true,
+          true,
+          true
+        ]
+      },
+      "gvr": {
+        "closure_rate": 1.0,
+        "statuses": [
+          "closed",
+          "closed",
+          "closed"
+        ],
+        "closed": [
+          true,
+          true,
+          true
+        ]
+      },
+      "delta_gvr_minus_flat": 0
+    },
+    "oscillating_constraint_refactor": {
+      "flat": {
+        "closure_rate": 1.0,
+        "statuses": [
+          "closed",
+          "closed",
+          "closed"
+        ],
+        "closed": [
+          true,
+          true,
+          true
+        ]
+      },
+      "gvr": {
+        "closure_rate": 1.0,
+        "statuses": [
+          "closed",
+          "closed",
+          "closed"
+        ],
+        "closed": [
+          true,
+          true,
+          true
+        ]
+      },
+      "delta_gvr_minus_flat": 0
+    }
+  },
+  "verdict": {
+    "gvr_beats_flat": false,
+    "gvr_beats_flat_on_decisive_goals": false,
+    "decisive_goal_flat_zero_after_fix": false,
+    "reason": "After sandbox provisioning, flat closed both previously-flat-0.0 decisive goals at 1.0. GVR closed budget_constrained_build_order at 0.0 and oscillating_constraint_refactor at 1.0."
+  },
+  "caveats": [
+    "The previous flat=0.0 baseline was a sandbox missing Mix artifact, not plan quality."
+  ]
+}

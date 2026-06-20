@@ -250,9 +250,6 @@ defmodule Orchid.Planner.Generator do
 
   defp retryable_output_miss("no decodable JSON array found" = reason), do: {:retry, reason}
 
-  defp retryable_output_miss("task array must contain at least one task" = reason),
-    do: {:retry, reason}
-
   defp retryable_output_miss(reason), do: {:error, reason}
 
   defp log_output_retry(attempt, max_attempts, reason) do
@@ -306,7 +303,7 @@ defmodule Orchid.Planner.Generator do
     end
   end
 
-  defp normalize_tasks([]), do: {:error, "task array must contain at least one task"}
+  defp normalize_tasks([]), do: {:ok, []}
 
   defp normalize_tasks(tasks) do
     tasks

@@ -63,7 +63,9 @@ defstruct [:agent_id, :project_id, :container_name, :lower_path, :upper_path,
 
 **Important:** All paths are expanded to absolute via `Path.expand()` because podman requires absolute paths for `-v` mounts.
 
-**Image:** Reads from fact `"sandbox_image"`, defaults to `alpine:latest`.
+**Image:** Reads from fact `"sandbox_image"`, defaults to `orchid-sandbox:latest`.
+The default sandbox image includes the runtime tools agents need for benchmark
+closure checks, including Node.js, Erlang/Elixir, and Mix.
 
 ### `lib/orchid/tools/sandbox_reset.ex`
 Tool (`@behaviour Orchid.Tool`) that lets the agent reset its own sandbox.
