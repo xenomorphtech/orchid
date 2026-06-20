@@ -31,7 +31,9 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
 
     reject_invalid_options!(invalid)
 
+    repo_cwd = File.cwd!()
     output_path = opts |> Keyword.get(:out, @default_out) |> validate_output_path!()
+    output_file = Path.expand(output_path, repo_cwd)
 
     goal_timeout_ms =
       opts
@@ -63,15 +65,20 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
 
         goals =
           Enum.map(definitions, fn definition ->
-            run_goal(definition, goal_timeout_ms, success_timeout_ms)
+            File.cd!(repo_cwd)
+            run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd)
           end)
 
-        report = build_report(goals, definitions, data_dir, output_path, started_at)
-        write_report!(report, output_path)
+        File.cd!(repo_cwd)
+        report = build_report(goals, definitions, data_dir, output_file, started_at)
+        write_report!(report, output_file)
         report
       after
+        File.cd!(repo_cwd)
         stop_named(GoalWatcher)
         Supervisor.stop(supervisor)
+
+        File.cd!(repo_cwd)
 
         unless keep_data_dir? do
           File.rm_rf(data_dir)
@@ -84,7 +91,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     )
   end
 
-  defp run_goal(definition, goal_timeout_ms, success_timeout_ms) do
+  defp run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd) do
     started_at = monotonic_ms()
 
     case create_fixture(definition) do
@@ -99,21 +106,25 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
         }
 
         counter = __MODULE__.ModelCallCounter.start!()
-        start_goal_watcher!()
+        File.cd!(repo_cwd)
+        start_goal_watcher!(repo_cwd)
 
         try do
+          File.cd!(repo_cwd)
           send(GoalWatcher, :check)
 
           wait_result =
             wait_for_goal(definition, project, goal.id, %{
               deadline: monotonic_ms() + goal_timeout_ms,
               success_timeout_ms: success_timeout_ms,
+              repo_cwd: repo_cwd,
               watcher_checks: 1,
               success_seen_at: nil
             })
 
           model_calls = __MODULE__.ModelCallCounter.stop(counter)
-          cleanup_project(project.id)
+          File.cd!(repo_cwd)
+          cleanup_project(project.id, repo_cwd)
 
           encode_goal_result(
             definition,
@@ -129,7 +140,8 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
         rescue
           error ->
             model_calls = __MODULE__.ModelCallCounter.stop(counter)
-            cleanup_project(project.id)
+            File.cd!(repo_cwd)
+            cleanup_project(project.id, repo_cwd)
 
             error_goal_result(
               definition,
@@ -145,7 +157,8 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
         catch
           kind, reason ->
             model_calls = __MODULE__.ModelCallCounter.stop(counter)
-            cleanup_project(project.id)
+            File.cd!(repo_cwd)
+            cleanup_project(project.id, repo_cwd)
 
             error_goal_result(
               definition,
@@ -159,6 +172,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
               monotonic_ms() - started_at
             )
         after
+          File.cd!(repo_cwd)
           stop_named(GoalWatcher)
         end
 
@@ -177,7 +191,15 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
 
   defp wait_for_goal(definition, project, goal_id, state) do
     now = monotonic_ms()
-    success = run_success_check(project.id, definition.success_check, state.success_timeout_ms)
+
+    success =
+      run_success_check(
+        project.id,
+        definition.success_check,
+        state.success_timeout_ms,
+        state.repo_cwd
+      )
+
     goals = Object.list_goals_for_project(project.id)
     top_goal = Enum.find(goals, &(&1.id == goal_id))
     active_agents = active_agent_states(project.id)
@@ -379,33 +401,37 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     end)
   end
 
-  defp run_success_check(project_id, command, timeout_ms) do
-    case Sandbox.status(project_id) do
-      %{status: :ready, running: true} ->
-        case Sandbox.exec(project_id, command, timeout: timeout_ms) do
-          {:ok, output} ->
-            %{passed: true, command: command, output: String.trim(output)}
+  defp run_success_check(project_id, command, timeout_ms, repo_cwd) do
+    try do
+      case Sandbox.status(project_id) do
+        %{status: :ready, running: true} ->
+          case Sandbox.exec(project_id, command, timeout: timeout_ms) do
+            {:ok, output} ->
+              %{passed: true, command: command, output: String.trim(output)}
 
-          {:error, reason} ->
-            %{passed: false, command: command, error: truncate(inspect(reason), 1_000)}
-        end
+            {:error, reason} ->
+              %{passed: false, command: command, error: truncate(inspect(reason), 1_000)}
+          end
 
-      _ ->
-        root = Project.files_path(project_id)
-        host_command = String.replace(command, "/workspace", shell_escape(root))
+        _ ->
+          root = Project.files_path(project_id)
+          host_command = String.replace(command, "/workspace", shell_escape(root))
 
-        case System.cmd("sh", ["-c", host_command], stderr_to_stdout: true) do
-          {output, 0} ->
-            %{passed: true, command: command, output: String.trim(output), fallback: :host}
+          case System.cmd("sh", ["-c", host_command], stderr_to_stdout: true) do
+            {output, 0} ->
+              %{passed: true, command: command, output: String.trim(output), fallback: :host}
 
-          {output, code} ->
-            %{
-              passed: false,
-              command: command,
-              error: "exit=#{code} output=#{String.trim(output)}",
-              fallback: :host
-            }
-        end
+            {output, code} ->
+              %{
+                passed: false,
+                command: command,
+                error: "exit=#{code} output=#{String.trim(output)}",
+                fallback: :host
+              }
+          end
+      end
+    after
+      File.cd!(repo_cwd)
     end
   end
 
@@ -634,7 +660,9 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     end
   end
 
-  defp start_goal_watcher! do
+  defp start_goal_watcher!(repo_cwd) do
+    File.cd!(repo_cwd)
+
     case GoalWatcher.start_link([]) do
       {:ok, pid} -> pid
       {:error, {:already_started, pid}} -> pid
@@ -642,11 +670,16 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     end
   end
 
-  defp cleanup_project(project_id) do
-    Object.update_metadata(project_id, %{status: :real_goal_harness_done, clearing_goals: true})
-    stop_project_agents(project_id)
-    Projects.stop_sandbox(project_id)
-    :ok
+  defp cleanup_project(project_id, repo_cwd) do
+    try do
+      File.cd!(repo_cwd)
+      Object.update_metadata(project_id, %{status: :real_goal_harness_done, clearing_goals: true})
+      stop_project_agents(project_id)
+      Projects.stop_sandbox(project_id)
+      :ok
+    after
+      File.cd!(repo_cwd)
+    end
   end
 
   defp stop_project_agents(project_id) do
@@ -753,7 +786,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
         "no decodable output",
         "api_key_missing",
         "timed out starting orchid mcp bridge",
-        "openrouter"
+        "openrouter api error"
       ],
       &String.contains?(down, &1)
     )
@@ -807,7 +840,8 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     do: Mix.raise("#{flag} must be positive, got #{inspect(value)}")
 
   defp temp_data_dir do
-    Path.join(System.tmp_dir!(), "orchid-real-goal-closure-#{System.unique_integer([:positive])}")
+    suffix = "#{System.system_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+    Path.join(System.tmp_dir!(), "orchid-real-goal-closure-#{suffix}")
   end
 
   defp last_assistant_message(%{messages: messages}) when is_list(messages) do
