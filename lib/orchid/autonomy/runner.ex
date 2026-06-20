@@ -60,12 +60,14 @@ defmodule Orchid.Autonomy.Runner do
           | {:wall_clock_timeout_ms, pos_integer()}
           | {:success_timeout_ms, pos_integer()}
           | {:gvr_num_paths, pos_integer()}
+          | {:gvr_planner_max_iterations, pos_integer()}
           | {:gvr_max_rounds, pos_integer()}
           | {:gvr_max_delegate_depth, non_neg_integer()}
 
   @default_wall_clock_timeout_ms 360_000
   @default_success_timeout_ms 120_000
   @default_gvr_max_rounds 6
+  @default_gvr_planner_max_iterations 3
   @default_gvr_max_delegate_depth 3
   @agent_tools ~w(shell read edit list grep task_report_result)
   @planner_llm_config %{provider: :codex, model: :gpt55}
@@ -457,7 +459,7 @@ defmodule Orchid.Autonomy.Runner do
 
       true ->
         objective = gvr_planning_objective(context)
-        planner_opts = gvr_planner_opts(project_id, context, opts)
+        planner_opts = gvr_planner_opts(project_id, context, state, max_steps, opts)
 
         case Planner.plan_tasks(objective, Sandbox.status(project_id), planner_opts) do
           {:ok, []} ->
@@ -662,15 +664,18 @@ defmodule Orchid.Autonomy.Runner do
     {:error, state, add_gvr_failure(context, task, "invalid G-V-R task")}
   end
 
-  defp gvr_planner_opts(project_id, context, opts) do
+  defp gvr_planner_opts(project_id, context, state, max_steps, opts) do
     [
       num_paths: Keyword.get(opts, :gvr_num_paths, 1),
-      max_iterations: 1,
+      max_iterations:
+        Keyword.get(opts, :gvr_planner_max_iterations, @default_gvr_planner_max_iterations),
       max_concurrency: Keyword.get(opts, :gvr_num_paths, 1),
       llm_memoize: Keyword.get(opts, :gvr_llm_memoize, true),
       project_id: project_id,
       completed_tasks: context.completed_tasks,
       allowed_tools: @agent_tools,
+      execution_step_budget_remaining: remaining_gvr_steps(state, max_steps),
+      execution_step_budget_total: max_steps,
       workspace_context: gvr_workspace_context(project_id),
       llm_config: gvr_llm_config(opts)
     ]
@@ -751,7 +756,7 @@ defmodule Orchid.Autonomy.Runner do
       id: Map.get(task, :id),
       type: Map.get(task, :type),
       objective: Map.get(task, :objective),
-      result: truncate(to_string(summary), 500)
+      result: truncate(to_string(summary), 2_000)
     }
 
     %{context | completed_tasks: context.completed_tasks ++ [completed]}
@@ -762,7 +767,7 @@ defmodule Orchid.Autonomy.Runner do
       id: Map.get(task, :id),
       type: Map.get(task, :type),
       objective: Map.get(task, :objective),
-      reason: truncate(to_string(reason), 500)
+      reason: truncate(to_string(reason), 2_000)
     }
 
     %{context | failures: context.failures ++ [failure]}
@@ -771,6 +776,10 @@ defmodule Orchid.Autonomy.Runner do
   defp add_gvr_message(state, content) do
     message = %{role: :assistant, content: content, timestamp: DateTime.utc_now()}
     %{state | messages: state.messages ++ [message]}
+  end
+
+  defp remaining_gvr_steps(state, max_steps) do
+    max(max_steps - gvr_depth(state), 0)
   end
 
   defp gvr_depth(state) do

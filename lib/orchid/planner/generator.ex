@@ -77,16 +77,23 @@ defmodule Orchid.Planner.Generator do
     Decompose the current objective into immediate next tasks using lazy
     hierarchical planning:
 
-    - Use type "delegate" when the sub-task is broad, investigative, or missing
-      concrete execution details.
+    - Use type "delegate" only when the sub-task is broad enough to need its
+      own planning loop.
     - Use type "tool" only when the exact Orchid tool name and exact JSON args
       are known now.
 
     Strict rules for tool tasks:
     - Do not emit placeholders, TODOs, comments-as-commands, or guessed paths.
     - If a shell command is needed, args.command must be concrete and runnable.
-    - If a file path, pattern, or command flag is unknown, emit a delegate task
-      to discover it instead.
+    - If a file path, pattern, command flag, or file content is unknown but can
+      be discovered with read, list, grep, or shell, emit that concrete
+      inspection tool task. The runner replans after tool tasks complete.
+    - If an edit or shell write depends on information that would be discovered
+      by an earlier task in the same array, stop at the inspection tasks for
+      this round. Do not guess constants, APIs, or expected outputs; wait for
+      the next planning round to use completed history.
+    - Do not emit a delegate merely to defer file inspection, code editing, test
+      execution, or result reporting that the available tools can perform.
 
     Return ONLY a valid JSON array of task objects. Do not include markdown.
     """
@@ -97,6 +104,7 @@ defmodule Orchid.Planner.Generator do
     allowed_tools = allowed_tools(opts) |> Enum.join(", ")
     path_note = path_note(opts)
     revision_note = revision_note(opts)
+    execution_budget_note = execution_budget_note(opts)
 
     """
     CURRENT OBJECTIVE:
@@ -108,6 +116,8 @@ defmodule Orchid.Planner.Generator do
     #{path_note}
 
     #{revision_note}
+
+    #{execution_budget_note}
 
     AVAILABLE ORCHID TOOLS FOR TOOL TASKS:
     #{allowed_tools}
@@ -202,6 +212,31 @@ defmodule Orchid.Planner.Generator do
 
       true ->
         ""
+    end
+  end
+
+  defp execution_budget_note(opts) do
+    remaining = Map.get(opts, :execution_step_budget_remaining)
+    total = Map.get(opts, :execution_step_budget_total)
+
+    if is_integer(remaining) do
+      total_text = if is_integer(total), do: " of #{total}", else: ""
+
+      """
+      EXECUTION STEP BUDGET:
+      Planner generation, verification, and revision are outside the executor
+      step budget. The executor has #{remaining}#{total_text} successful tool
+      step(s) remaining. Delegate tasks recursively plan and execute their own
+      tools, so they are expensive under tight budgets. Prefer a short,
+      topologically ordered list of concrete tool tasks whenever the objective,
+      workspace context, or completed history already names the files and
+      commands. Do not delegate just to restate known work; include the final
+      acceptance or verification command as a concrete tool task when it is
+      known.
+      """
+      |> String.trim()
+    else
+      ""
     end
   end
 

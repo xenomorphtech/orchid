@@ -1,0 +1,679 @@
+{
+  "status": "complete",
+  "provider": "codex",
+  "runner_mode": "gvr",
+  "model_id": "gpt55",
+  "model": "gpt-5.5",
+  "model_proof": "provider=codex model=gpt-5.5",
+  "benchmark_count": 3,
+  "benchmarks": [
+    {
+      "id": "budget_constrained_build_order",
+      "category": "development",
+      "samples": [
+        {
+          "status": "closed",
+          "run": 1,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 7,
+            "runner_mode": "gvr",
+            "project_id": "yxSDYcVdiQYyMMa7",
+            "agent_id": "gvr-l26-lJuREPgZSCav",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,240p' README.md && sed -n '1,200p' mix.exs && sed -n '1,240p' test/build_order_pipeline_test.exs && sed -n '1,120p' test/test_helper.exs"
+                },
+                "index": 1,
+                "status": "ok",
+                "timestamp": "2026-06-20T17:59:56.464434Z",
+                "summary": "# Budget-Constrained Build Order\n\nDependency DAG:\n\n- BuildOrder.Parser is foundation A.\n- BuildOrder.Rules is foundation B.\n- BuildOrder.Validator depends on Parser and Rules.\n- BuildOrder.Renderer depends on the validated manifest entries.\n- BuildOrder.Pipeline depends on Validator and Renderer.\n\nThe file names are reverse ordered on purpose. Implementing Pipeline first\nproduces failures that do not identify the real missing layers.\n\nInput rows are `sku|quantity|priority|region`. Ignore blank lines, comment\nlines beginning with `#`, malformed rows, and rows with quantity <= 0.\n\nPriority multipliers:\n\n- gold: 30\n- silver: 12\n- bronze: 5\n\nScore is quantity * multiplier. Keep only entries with score >= 10.\nThe tag is `expedite` when priority is gold or score >= 40; otherwise it\nis `standard`. Sort by score descending, then SKU ascending.\n\nRender lines exactly as:\n\n`region=<region> sku=<sku> score=<score> tag=<tag>`\ndefmodule BuildOrder.MixProject do\n  use Mix.Project\n\n  def project do\n  ...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,260p' lib/build_order/04_parser.ex && sed -n '1,260p' lib/build_order/03_rules.ex"
+                },
+                "index": 2,
+                "status": "ok",
+                "timestamp": "2026-06-20T17:59:57.813556Z",
+                "summary": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  def classify(entry), do: entry\nend\n",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,260p' lib/build_order/01_validator.ex && sed -n '1,260p' lib/build_order/02_renderer.ex"
+                },
+                "index": 3,
+                "status": "ok",
+                "timestamp": "2026-06-20T17:59:59.113717Z",
+                "summary": "defmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(_source), do: []\nend\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(_entries), do: []\nend\n",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,260p' lib/build_order/00_pipeline.ex"
+                },
+                "index": 4,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:00:00.637634Z",
+                "summary": "defmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(_source), do: []\nend\n",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/04_parser.ex <<'EOF'\ndefmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(source) when is_binary(source) do\n    source\n    |> String.split(\"\\n\")\n    |> Enum.flat_map(&parse_row/1)\n  end\n\n  defp parse_row(row) do\n    row = String.trim(row)\n\n    cond do\n      row == \"\" ->\n        []\n\n      String.starts_with?(row, \"#\") ->\n        []\n\n      true ->\n        case String.split(row, \"|\") do\n          [sku, quantity_text, priority, region] ->\n            with {quantity, \"\"} <- Integer.parse(String.trim(quantity_text)),\n                 true <- quantity > 0 do\n              [\n                %{\n                  sku: String.trim(sku),\n                  quantity: quantity,\n                  priority: String.trim(priority),\n                  region: String.trim(region)\n                }\n              ]\n            else\n              _ -> []\n            end\n\n          _ ->\n            []\n        end\n    end\n  end\nend\nEOF\ncat > lib/build_order/03_rules.ex <<'EOF'\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  @multipliers %{\n    \"gold\" => 30,\n    \"silver\" => 12,\n    \"bronze\" => 5\n  }\n\n  def classify(%{priority: priority, quantity: quantity} = entry) do\n    case Map.fetch(@multipliers, priority) do\n      {:ok, multiplier} ->\n        score = quantity * multiplier\n        tag = if priority == \"gold\" or score >= 40, do: \"expedite\", else: \"standard\"\n\n        entry\n        |> Map.put(:score, score)\n        |> Map.put(:tag, tag)\n\n      :error ->\n        nil\n    end\n  end\nend\nEOF"
+                },
+                "index": 5,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:00:58.860700Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/01_validator.ex <<'EOF'\ndefmodule BuildOrder.Validator do\n  @moduledoc false\n\n  alias BuildOrder.Parser\n  alias BuildOrder.Rules\n\n  def accepted(source) do\n    source\n    |> Parser.parse()\n    |> Enum.map(&Rules.classify/1)\n    |> Enum.reject(&is_nil/1)\n    |> Enum.filter(&(&1.score >= 10))\n    |> Enum.sort_by(&{-&1.score, &1.sku})\n  end\nend\nEOF\ncat > lib/build_order/02_renderer.ex <<'EOF'\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(entries) do\n    Enum.map(entries, fn entry ->\n      \"region=#{entry.region} sku=#{entry.sku} score=#{entry.score} tag=#{entry.tag}\"\n    end)\n  end\nend\nEOF"
+                },
+                "index": 6,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:00.389830Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/00_pipeline.ex <<'EOF'\ndefmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  alias BuildOrder.Renderer\n  alias BuildOrder.Validator\n\n  def run(source) do\n    source\n    |> Validator.accepted()\n    |> Renderer.format()\n  end\nend\nEOF"
+                },
+                "index": 7,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:01.761330Z",
+                "summary": "",
+                "tool": "shell"
+              }
+            ],
+            "goal_id": "l26-lJuREPgZSCav",
+            "turn_result": "ok",
+            "duration_ms": 144362,
+            "last_assistant_message": "G-V-R success check passed."
+          },
+          "runner_mode": "gvr",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 7,
+            "goal_closure": true
+          }
+        },
+        {
+          "status": "closed",
+          "run": 2,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 7,
+            "runner_mode": "gvr",
+            "project_id": "tDZXnuJGTzfYxIyy",
+            "agent_id": "gvr-NjlClhLdhW64cfqe",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,240p' README.md && sed -n '1,200p' mix.exs && sed -n '1,240p' test/build_order_pipeline_test.exs && sed -n '1,120p' test/test_helper.exs"
+                },
+                "index": 1,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:17.299710Z",
+                "summary": "# Budget-Constrained Build Order\n\nDependency DAG:\n\n- BuildOrder.Parser is foundation A.\n- BuildOrder.Rules is foundation B.\n- BuildOrder.Validator depends on Parser and Rules.\n- BuildOrder.Renderer depends on the validated manifest entries.\n- BuildOrder.Pipeline depends on Validator and Renderer.\n\nThe file names are reverse ordered on purpose. Implementing Pipeline first\nproduces failures that do not identify the real missing layers.\n\nInput rows are `sku|quantity|priority|region`. Ignore blank lines, comment\nlines beginning with `#`, malformed rows, and rows with quantity <= 0.\n\nPriority multipliers:\n\n- gold: 30\n- silver: 12\n- bronze: 5\n\nScore is quantity * multiplier. Keep only entries with score >= 10.\nThe tag is `expedite` when priority is gold or score >= 40; otherwise it\nis `standard`. Sort by score descending, then SKU ascending.\n\nRender lines exactly as:\n\n`region=<region> sku=<sku> score=<score> tag=<tag>`\ndefmodule BuildOrder.MixProject do\n  use Mix.Project\n\n  def project do\n  ...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,260p' lib/build_order/04_parser.ex && sed -n '1,260p' lib/build_order/03_rules.ex"
+                },
+                "index": 2,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:18.713636Z",
+                "summary": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  def classify(entry), do: entry\nend\n",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,260p' lib/build_order/01_validator.ex && sed -n '1,260p' lib/build_order/02_renderer.ex"
+                },
+                "index": 3,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:20.097599Z",
+                "summary": "defmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(_source), do: []\nend\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(_entries), do: []\nend\n",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,260p' lib/build_order/00_pipeline.ex"
+                },
+                "index": 4,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:24.055505Z",
+                "summary": "defmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(_source), do: []\nend\n",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/04_parser.ex <<'EOF'\ndefmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(source) when is_binary(source) do\n    source\n    |> String.split(\"\\n\")\n    |> Enum.flat_map(&parse_row/1)\n  end\n\n  defp parse_row(row) do\n    row = String.trim(row)\n\n    cond do\n      row == \"\" ->\n        []\n\n      String.starts_with?(row, \"#\") ->\n        []\n\n      true ->\n        case String.split(row, \"|\") do\n          [sku, quantity_text, priority, region] ->\n            with {quantity, \"\"} <- Integer.parse(String.trim(quantity_text)),\n                 true <- quantity > 0 do\n              [\n                %{\n                  sku: String.trim(sku),\n                  quantity: quantity,\n                  priority: String.trim(priority),\n                  region: String.trim(region)\n                }\n              ]\n            else\n              _ -> []\n            end\n\n          _ ->\n            []\n        end\n    end\n  end\nend\nEOF\ncat > lib/build_order/03_rules.ex <<'EOF'\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  @multipliers %{\n    \"gold\" => 30,\n    \"silver\" => 12,\n    \"bronze\" => 5\n  }\n\n  def classify(%{priority: priority, quantity: quantity} = entry) do\n    case Map.fetch(@multipliers, priority) do\n      {:ok, multiplier} ->\n        score = quantity * multiplier\n        tag = if priority == \"gold\" or score >= 40, do: \"expedite\", else: \"standard\"\n\n        entry\n        |> Map.put(:score, score)\n        |> Map.put(:tag, tag)\n\n      :error ->\n        nil\n    end\n  end\nend\nEOF"
+                },
+                "index": 5,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:27.665057Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/01_validator.ex <<'EOF'\ndefmodule BuildOrder.Validator do\n  @moduledoc false\n\n  alias BuildOrder.Parser\n  alias BuildOrder.Rules\n\n  def accepted(source) do\n    source\n    |> Parser.parse()\n    |> Enum.map(&Rules.classify/1)\n    |> Enum.reject(&is_nil/1)\n    |> Enum.filter(&(&1.score >= 10))\n    |> Enum.sort_by(&{-&1.score, &1.sku})\n  end\nend\nEOF\ncat > lib/build_order/02_renderer.ex <<'EOF'\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(entries) do\n    Enum.map(entries, fn entry ->\n      \"region=#{entry.region} sku=#{entry.sku} score=#{entry.score} tag=#{entry.tag}\"\n    end)\n  end\nend\nEOF"
+                },
+                "index": 6,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:29.039465Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/00_pipeline.ex <<'EOF'\ndefmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  alias BuildOrder.Renderer\n  alias BuildOrder.Validator\n\n  def run(source) do\n    source\n    |> Validator.accepted()\n    |> Renderer.format()\n  end\nend\nEOF"
+                },
+                "index": 7,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:30.590492Z",
+                "summary": "",
+                "tool": "shell"
+              }
+            ],
+            "goal_id": "NjlClhLdhW64cfqe",
+            "turn_result": "ok",
+            "duration_ms": 16104,
+            "last_assistant_message": "G-V-R success check passed."
+          },
+          "runner_mode": "gvr",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 7,
+            "goal_closure": true
+          }
+        },
+        {
+          "status": "closed",
+          "run": 3,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 7,
+            "runner_mode": "gvr",
+            "project_id": "z1gatQ9qsozJaJWX",
+            "agent_id": "gvr-FRu3NlOJZIbit77_",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,240p' README.md && sed -n '1,200p' mix.exs && sed -n '1,240p' test/build_order_pipeline_test.exs && sed -n '1,120p' test/test_helper.exs"
+                },
+                "index": 1,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:50.888102Z",
+                "summary": "# Budget-Constrained Build Order\n\nDependency DAG:\n\n- BuildOrder.Parser is foundation A.\n- BuildOrder.Rules is foundation B.\n- BuildOrder.Validator depends on Parser and Rules.\n- BuildOrder.Renderer depends on the validated manifest entries.\n- BuildOrder.Pipeline depends on Validator and Renderer.\n\nThe file names are reverse ordered on purpose. Implementing Pipeline first\nproduces failures that do not identify the real missing layers.\n\nInput rows are `sku|quantity|priority|region`. Ignore blank lines, comment\nlines beginning with `#`, malformed rows, and rows with quantity <= 0.\n\nPriority multipliers:\n\n- gold: 30\n- silver: 12\n- bronze: 5\n\nScore is quantity * multiplier. Keep only entries with score >= 10.\nThe tag is `expedite` when priority is gold or score >= 40; otherwise it\nis `standard`. Sort by score descending, then SKU ascending.\n\nRender lines exactly as:\n\n`region=<region> sku=<sku> score=<score> tag=<tag>`\ndefmodule BuildOrder.MixProject do\n  use Mix.Project\n\n  def project do\n  ...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,260p' lib/build_order/04_parser.ex && sed -n '1,260p' lib/build_order/03_rules.ex"
+                },
+                "index": 2,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:52.401725Z",
+                "summary": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  def classify(entry), do: entry\nend\n",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,260p' lib/build_order/01_validator.ex && sed -n '1,260p' lib/build_order/02_renderer.ex"
+                },
+                "index": 3,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:53.810862Z",
+                "summary": "defmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(_source), do: []\nend\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(_entries), do: []\nend\n",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,260p' lib/build_order/00_pipeline.ex"
+                },
+                "index": 4,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:55.220799Z",
+                "summary": "defmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(_source), do: []\nend\n",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/04_parser.ex <<'EOF'\ndefmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(source) when is_binary(source) do\n    source\n    |> String.split(\"\\n\")\n    |> Enum.flat_map(&parse_row/1)\n  end\n\n  defp parse_row(row) do\n    row = String.trim(row)\n\n    cond do\n      row == \"\" ->\n        []\n\n      String.starts_with?(row, \"#\") ->\n        []\n\n      true ->\n        case String.split(row, \"|\") do\n          [sku, quantity_text, priority, region] ->\n            with {quantity, \"\"} <- Integer.parse(String.trim(quantity_text)),\n                 true <- quantity > 0 do\n              [\n                %{\n                  sku: String.trim(sku),\n                  quantity: quantity,\n                  priority: String.trim(priority),\n                  region: String.trim(region)\n                }\n              ]\n            else\n              _ -> []\n            end\n\n          _ ->\n            []\n        end\n    end\n  end\nend\nEOF\ncat > lib/build_order/03_rules.ex <<'EOF'\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  @multipliers %{\n    \"gold\" => 30,\n    \"silver\" => 12,\n    \"bronze\" => 5\n  }\n\n  def classify(%{priority: priority, quantity: quantity} = entry) do\n    case Map.fetch(@multipliers, priority) do\n      {:ok, multiplier} ->\n        score = quantity * multiplier\n        tag = if priority == \"gold\" or score >= 40, do: \"expedite\", else: \"standard\"\n\n        entry\n        |> Map.put(:score, score)\n        |> Map.put(:tag, tag)\n\n      :error ->\n        nil\n    end\n  end\nend\nEOF"
+                },
+                "index": 5,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:01:59.680636Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/01_validator.ex <<'EOF'\ndefmodule BuildOrder.Validator do\n  @moduledoc false\n\n  alias BuildOrder.Parser\n  alias BuildOrder.Rules\n\n  def accepted(source) do\n    source\n    |> Parser.parse()\n    |> Enum.map(&Rules.classify/1)\n    |> Enum.reject(&is_nil/1)\n    |> Enum.filter(&(&1.score >= 10))\n    |> Enum.sort_by(&{-&1.score, &1.sku})\n  end\nend\nEOF\ncat > lib/build_order/02_renderer.ex <<'EOF'\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(entries) do\n    Enum.map(entries, fn entry ->\n      \"region=#{entry.region} sku=#{entry.sku} score=#{entry.score} tag=#{entry.tag}\"\n    end)\n  end\nend\nEOF"
+                },
+                "index": 6,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:02:01.229633Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/00_pipeline.ex <<'EOF'\ndefmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  alias BuildOrder.Renderer\n  alias BuildOrder.Validator\n\n  def run(source) do\n    source\n    |> Validator.accepted()\n    |> Renderer.format()\n  end\nend\nEOF"
+                },
+                "index": 7,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:02:02.642958Z",
+                "summary": "",
+                "tool": "shell"
+              }
+            ],
+            "goal_id": "FRu3NlOJZIbit77_",
+            "turn_result": "ok",
+            "duration_ms": 16156,
+            "last_assistant_message": "G-V-R success check passed."
+          },
+          "runner_mode": "gvr",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 7,
+            "goal_closure": true
+          }
+        }
+      ],
+      "objective": "Complete the seeded Mix project in `/workspace` under a tight budget. The files\nare named in a misleading order; do not work from the top of the listing.\nRead the dependency notes and implement the release-manifest pipeline in\ntopological order: Parser and Rules first, then Validator and Renderer, then\nPipeline. The single integration test must pass.\n",
+      "max_steps": 28,
+      "success_check": {
+        "command": "cd /workspace && mix test 2>&1 | grep -q '0 failures'",
+        "type": "shell"
+      },
+      "seed_files": [
+        "mix.exs",
+        "README.md",
+        "lib/build_order/00_pipeline.ex",
+        "lib/build_order/01_validator.ex",
+        "lib/build_order/02_renderer.ex",
+        "lib/build_order/03_rules.ex",
+        "lib/build_order/04_parser.ex",
+        "test/test_helper.exs",
+        "test/build_order_pipeline_test.exs"
+      ],
+      "recovery_checks": [],
+      "goal_closure_rate": 1.0,
+      "median_score": {
+        "recovery_rate": 0.0,
+        "unattended_depth": 7
+      },
+      "runner_mode": "gvr"
+    },
+    {
+      "id": "garden_path_diagnosis",
+      "category": "operation",
+      "samples": [
+        {
+          "status": "closed",
+          "run": 1,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 1,
+            "runner_mode": "gvr",
+            "project_id": "HVGZrJkDasRH1GjM",
+            "agent_id": "gvr-MfId1Z_1s48XS0x0",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && auth_evidence=$(grep -Eih '(invalid_audience|401|audience|orchid-api|mobile)' logs/api.log logs/dashboard.log | head -n 3) && printf '%s\\n' \"$auth_evidence\" | grep -Eiq '(invalid_audience|401)' && printf '%s\\n' \"$auth_evidence\" | grep -Eiq '(orchid-api|mobile|audience)' && if grep -Eiq '(cache.*(full|capacity|evict|oom|size)|evict.*cache|CACHE_SIZE)' logs/api.log logs/dashboard.log; then cache_evidence=$(grep -Eih '(cache.*(full|capacity|evict|oom|size)|evict.*cache|CACHE_SIZE)' logs/api.log logs/dashboard.log | head -n 3); else cache_evidence='no cache eviction, capacity, or size failure appeared in the incident logs'; fi && awk 'BEGIN{seen=0} /^TOKEN_AUDIENCE=/{print \"TOKEN_AUDIENCE=orchid-api\"; seen=1; next} {print} END{if(!seen) print \"TOKEN_AUDIENCE=orchid-api\"}' config/auth.env > /tmp/auth.env.fixed && mv /tmp/auth.env.fixed config/auth.env && grep -q '^JWKS_CACHE_TTL_SECONDS=300$' config/auth.env && grep -q '^CACHE_SIZE_MB=64$' config/cache.env && grep -q '^CACHE_EVICTION=lfu$' config/cache.env && printf '%s\\n' 'root_cause: token audience mismatch between mobile clients and orchid-api caused API authentication failures.' 'rejected_hypothesis: cache size was not the cause; cache.env remained at CACHE_SIZE_MB=64 and CACHE_EVICTION=lfu, and the logs did not identify cache capacity as the incident trigger.' \"verification: $(printf '%s' \"$auth_evidence\" | tr '\\n' ' ' | sed 's/[[:space:]]\\+/ /g') ; cache check: $(printf '%s' \"$cache_evidence\" | tr '\\n' ' ' | sed 's/[[:space:]]\\+/ /g')\" > ops/diagnosis.txt"
+                },
+                "index": 1,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:04:55.638741Z",
+                "summary": "",
+                "tool": "shell"
+              }
+            ],
+            "goal_id": "MfId1Z_1s48XS0x0",
+            "turn_result": "ok",
+            "duration_ms": 155956,
+            "last_assistant_message": "G-V-R success check passed."
+          },
+          "runner_mode": "gvr",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 1,
+            "goal_closure": true
+          }
+        },
+        {
+          "status": "closed",
+          "run": 2,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 1,
+            "runner_mode": "gvr",
+            "project_id": "T1br65HvVKDgFJY3",
+            "agent_id": "gvr-l5pRidqJMP9jeLpT",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && auth_evidence=$(grep -Eih '(invalid_audience|401|audience|orchid-api|mobile)' logs/api.log logs/dashboard.log | head -n 3) && printf '%s\\n' \"$auth_evidence\" | grep -Eiq '(invalid_audience|401)' && printf '%s\\n' \"$auth_evidence\" | grep -Eiq '(orchid-api|mobile|audience)' && if grep -Eiq '(cache.*(full|capacity|evict|oom|size)|evict.*cache|CACHE_SIZE)' logs/api.log logs/dashboard.log; then cache_evidence=$(grep -Eih '(cache.*(full|capacity|evict|oom|size)|evict.*cache|CACHE_SIZE)' logs/api.log logs/dashboard.log | head -n 3); else cache_evidence='no cache eviction, capacity, or size failure appeared in the incident logs'; fi && awk 'BEGIN{seen=0} /^TOKEN_AUDIENCE=/{print \"TOKEN_AUDIENCE=orchid-api\"; seen=1; next} {print} END{if(!seen) print \"TOKEN_AUDIENCE=orchid-api\"}' config/auth.env > /tmp/auth.env.fixed && mv /tmp/auth.env.fixed config/auth.env && grep -q '^JWKS_CACHE_TTL_SECONDS=300$' config/auth.env && grep -q '^CACHE_SIZE_MB=64$' config/cache.env && grep -q '^CACHE_EVICTION=lfu$' config/cache.env && printf '%s\\n' 'root_cause: token audience mismatch between mobile clients and orchid-api caused API authentication failures.' 'rejected_hypothesis: cache size was not the cause; cache.env remained at CACHE_SIZE_MB=64 and CACHE_EVICTION=lfu, and the logs did not identify cache capacity as the incident trigger.' \"verification: $(printf '%s' \"$auth_evidence\" | tr '\\n' ' ' | sed 's/[[:space:]]\\+/ /g') ; cache check: $(printf '%s' \"$cache_evidence\" | tr '\\n' ' ' | sed 's/[[:space:]]\\+/ /g')\" > ops/diagnosis.txt"
+                },
+                "index": 1,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:05:09.328354Z",
+                "summary": "",
+                "tool": "shell"
+              }
+            ],
+            "goal_id": "l5pRidqJMP9jeLpT",
+            "turn_result": "ok",
+            "duration_ms": 1453,
+            "last_assistant_message": "G-V-R success check passed."
+          },
+          "runner_mode": "gvr",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 1,
+            "goal_closure": true
+          }
+        },
+        {
+          "status": "closed",
+          "run": 3,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 1,
+            "runner_mode": "gvr",
+            "project_id": "kga5XrY-t7o3gRIg",
+            "agent_id": "gvr-eNLNYHpf4PxtafXh",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && auth_evidence=$(grep -Eih '(invalid_audience|401|audience|orchid-api|mobile)' logs/api.log logs/dashboard.log | head -n 3) && printf '%s\\n' \"$auth_evidence\" | grep -Eiq '(invalid_audience|401)' && printf '%s\\n' \"$auth_evidence\" | grep -Eiq '(orchid-api|mobile|audience)' && if grep -Eiq '(cache.*(full|capacity|evict|oom|size)|evict.*cache|CACHE_SIZE)' logs/api.log logs/dashboard.log; then cache_evidence=$(grep -Eih '(cache.*(full|capacity|evict|oom|size)|evict.*cache|CACHE_SIZE)' logs/api.log logs/dashboard.log | head -n 3); else cache_evidence='no cache eviction, capacity, or size failure appeared in the incident logs'; fi && awk 'BEGIN{seen=0} /^TOKEN_AUDIENCE=/{print \"TOKEN_AUDIENCE=orchid-api\"; seen=1; next} {print} END{if(!seen) print \"TOKEN_AUDIENCE=orchid-api\"}' config/auth.env > /tmp/auth.env.fixed && mv /tmp/auth.env.fixed config/auth.env && grep -q '^JWKS_CACHE_TTL_SECONDS=300$' config/auth.env && grep -q '^CACHE_SIZE_MB=64$' config/cache.env && grep -q '^CACHE_EVICTION=lfu$' config/cache.env && printf '%s\\n' 'root_cause: token audience mismatch between mobile clients and orchid-api caused API authentication failures.' 'rejected_hypothesis: cache size was not the cause; cache.env remained at CACHE_SIZE_MB=64 and CACHE_EVICTION=lfu, and the logs did not identify cache capacity as the incident trigger.' \"verification: $(printf '%s' \"$auth_evidence\" | tr '\\n' ' ' | sed 's/[[:space:]]\\+/ /g') ; cache check: $(printf '%s' \"$cache_evidence\" | tr '\\n' ' ' | sed 's/[[:space:]]\\+/ /g')\" > ops/diagnosis.txt"
+                },
+                "index": 1,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:05:27.692296Z",
+                "summary": "",
+                "tool": "shell"
+              }
+            ],
+            "goal_id": "eNLNYHpf4PxtafXh",
+            "turn_result": "ok",
+            "duration_ms": 3831,
+            "last_assistant_message": "G-V-R success check passed."
+          },
+          "runner_mode": "gvr",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 1,
+            "goal_closure": true
+          }
+        }
+      ],
+      "objective": "Diagnose the seeded API incident in `/workspace`. The README contains a\nplausible cache-size hypothesis, but you must verify it against the logs before\nchanging config. Apply only the actual fix, preserve unrelated cache settings,\nand write `ops/diagnosis.txt` with the root cause, rejected hypothesis, and\nverification evidence.\n",
+      "max_steps": 24,
+      "success_check": {
+        "command": "cd /workspace &&\ngrep -q '^TOKEN_AUDIENCE=orchid-api$' config/auth.env &&\ngrep -q '^JWKS_CACHE_TTL_SECONDS=300$' config/auth.env &&\ngrep -q '^CACHE_SIZE_MB=64$' config/cache.env &&\ngrep -q '^CACHE_EVICTION=lfu$' config/cache.env &&\ntest -f ops/diagnosis.txt &&\ngrep -Eiq '^root_cause:.*token audience.*(mobile|orchid-api)' ops/diagnosis.txt &&\ngrep -Eiq '^rejected_hypothesis:.*cache' ops/diagnosis.txt &&\ngrep -Eiq '^verification:.*(invalid_audience|401|orchid-api)' ops/diagnosis.txt\n",
+        "type": "shell"
+      },
+      "seed_files": [
+        "README.md",
+        "config/cache.env",
+        "config/auth.env",
+        "logs/dashboard.log",
+        "logs/api.log",
+        "ops/diagnosis.txt"
+      ],
+      "recovery_checks": [],
+      "goal_closure_rate": 1.0,
+      "median_score": {
+        "recovery_rate": 0.0,
+        "unattended_depth": 1
+      },
+      "runner_mode": "gvr"
+    },
+    {
+      "id": "oscillating_constraint_refactor",
+      "category": "development",
+      "samples": [
+        {
+          "status": "closed",
+          "run": 1,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 2,
+            "runner_mode": "gvr",
+            "project_id": "gq0XK_2EQPSCKbfx",
+            "agent_id": "gvr-hTl1JX6siU5cqc2E",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,240p' README.md lib/plan_sync/contract.ex lib/plan_sync/billing_payload.ex lib/plan_sync/warehouse_event.ex test/billing_payload_test.exs test/warehouse_event_test.exs"
+                },
+                "index": 1,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:06:54.973200Z",
+                "summary": "# Plan Sync Refactor\n\nThe shared business concept is a paid team plan. It has two boundary\nencodings:\n\n- Billing API code: `premium`\n- Warehouse event code: `pro`\n\nPaid team plans cost 4900 cents and include 25 seats. Warehouse events for\npaid plans must be billable and use seat band `multi`.\n\nThe current contract wrongly exposes one string as if every boundary used\nthe same code. Fix the shared contract, then update the two boundary\nmodules to consume explicit contract fields/functions.\ndefmodule PlanSync.Contract do\n  @moduledoc false\n\n  def canonical_plan(plan) when plan in [\"team\", \"enterprise\", \"pro\", \"premium\"], do: \"pro\"\n  def canonical_plan(_plan), do: \"free\"\n\n  def amount_cents(\"pro\"), do: 0\n  def amount_cents(_plan), do: 0\n\n  def included_seats(\"pro\"), do: 5\n  def included_seats(_plan), do: 1\n\n  def seat_band(\"pro\"), do: \"single\"\n  def seat_band(_plan), do: \"single\"\n\n  def billable?(\"pro\"), do: false\n  def billable?(_plan), do: false\nend\ndefmodule PlanSync.BillingPayload do\n ...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && mix test"
+                },
+                "index": 2,
+                "status": "error",
+                "timestamp": "2026-06-20T18:06:56.747789Z",
+                "summary": "\"Exit code 2:\\n\\n\\n  1) test billing boundary emits the premium API code and paid amounts (PlanSync.BillingPayloadTest)\\n     test/billing_payload_test.exs:4\\n     Assertion with == failed\\n     code:  assert PlanSync.BillingPayload.build(%{customer: \\\"cust-7\\\", plan: \\\"team\\\"}) == %{\\n              customer: \\\"cust-7\\\",\\n              plan: \\\"premium\\\",\\n              amount_cents: 4900,\\n              included_seats: 25\\n            }\\n     left:  %{\\n              amount_cents: 0,\\n              customer: \\\"cust-7\\\",\\n              included_seats: 5,\\n              plan: \\\"pro\\\"\\n            }\\n     right: %{\\n              amount_cents: 4900,\\n              customer: \\\"cust-7\\\",\\n              included_seats: 25,\\n              plan: \\\"premium\\\"\\n            }\\n     stacktrace:\\n       test/billing_payload_test.exs:5: (test)\\n\\n\\n\\n  2) test warehouse boundary keeps the pro event code for paid plans (PlanSync.WarehouseEventTest)\\n     test/warehouse_event_test.exs:4\\n     Assertion...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/plan_sync/contract.ex <<'EOF'\ndefmodule PlanSync.Contract do\n  @moduledoc false\n\n  @paid_plans [\"team\", \"enterprise\", \"pro\", \"premium\"]\n\n  def canonical_plan(plan) when plan in @paid_plans, do: :paid\n  def canonical_plan(_plan), do: :free\n\n  def billing_plan_code(:paid), do: \"premium\"\n  def billing_plan_code(:free), do: \"free\"\n\n  def warehouse_plan_code(:paid), do: \"pro\"\n  def warehouse_plan_code(:free), do: \"free\"\n\n  def amount_cents(:paid), do: 4900\n  def amount_cents(:free), do: 0\n\n  def included_seats(:paid), do: 25\n  def included_seats(:free), do: 1\n\n  def seat_band(:paid), do: \"multi\"\n  def seat_band(:free), do: \"single\"\n\n  def billable?(:paid), do: true\n  def billable?(:free), do: false\nend\nEOF\ncat > lib/plan_sync/billing_payload.ex <<'EOF'\ndefmodule PlanSync.BillingPayload do\n  @moduledoc false\n\n  alias PlanSync.Contract\n\n  def build(attrs) do\n    contract = Contract.canonical_plan(Map.fetch!(attrs, :plan))\n\n    %{\n      customer: Map.fetch!(attrs, :customer),\n      plan: Contract.billing_plan_code(contract),\n      amount_cents: Contract.amount_cents(contract),\n      included_seats: Contract.included_seats(contract)\n    }\n  end\nend\nEOF\ncat > lib/plan_sync/warehouse_event.ex <<'EOF'\ndefmodule PlanSync.WarehouseEvent do\n  @moduledoc false\n\n  alias PlanSync.Contract\n\n  def build(attrs) do\n    contract = Contract.canonical_plan(Map.fetch!(attrs, :plan))\n\n    %{\n      account_id: Map.fetch!(attrs, :account_id),\n      plan_code: Contract.warehouse_plan_code(contract),\n      seat_band: Contract.seat_band(contract),\n      billable: Contract.billable?(contract)\n    }\n  end\nend\nEOF"
+                },
+                "index": 3,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:08:00.283052Z",
+                "summary": "",
+                "tool": "shell"
+              }
+            ],
+            "goal_id": "hTl1JX6siU5cqc2E",
+            "turn_result": "ok",
+            "duration_ms": 139116,
+            "last_assistant_message": "G-V-R success check passed."
+          },
+          "runner_mode": "gvr",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 2,
+            "goal_closure": true
+          }
+        },
+        {
+          "status": "closed",
+          "run": 2,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 2,
+            "runner_mode": "gvr",
+            "project_id": "fQ-xLdUZ6C8KBego",
+            "agent_id": "gvr-ohqDSgXIgXs_kunc",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,240p' README.md lib/plan_sync/contract.ex lib/plan_sync/billing_payload.ex lib/plan_sync/warehouse_event.ex test/billing_payload_test.exs test/warehouse_event_test.exs"
+                },
+                "index": 1,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:08:15.779728Z",
+                "summary": "# Plan Sync Refactor\n\nThe shared business concept is a paid team plan. It has two boundary\nencodings:\n\n- Billing API code: `premium`\n- Warehouse event code: `pro`\n\nPaid team plans cost 4900 cents and include 25 seats. Warehouse events for\npaid plans must be billable and use seat band `multi`.\n\nThe current contract wrongly exposes one string as if every boundary used\nthe same code. Fix the shared contract, then update the two boundary\nmodules to consume explicit contract fields/functions.\ndefmodule PlanSync.Contract do\n  @moduledoc false\n\n  def canonical_plan(plan) when plan in [\"team\", \"enterprise\", \"pro\", \"premium\"], do: \"pro\"\n  def canonical_plan(_plan), do: \"free\"\n\n  def amount_cents(\"pro\"), do: 0\n  def amount_cents(_plan), do: 0\n\n  def included_seats(\"pro\"), do: 5\n  def included_seats(_plan), do: 1\n\n  def seat_band(\"pro\"), do: \"single\"\n  def seat_band(_plan), do: \"single\"\n\n  def billable?(\"pro\"), do: false\n  def billable?(_plan), do: false\nend\ndefmodule PlanSync.BillingPayload do\n ...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && mix test"
+                },
+                "index": 2,
+                "status": "error",
+                "timestamp": "2026-06-20T18:08:17.688536Z",
+                "summary": "\"Exit code 2:\\n\\n\\n  1) test warehouse boundary keeps the pro event code for paid plans (PlanSync.WarehouseEventTest)\\n     test/warehouse_event_test.exs:4\\n     Assertion with == failed\\n     code:  assert PlanSync.WarehouseEvent.build(%{account_id: \\\"acct-9\\\", plan: \\\"team\\\"}) == %{\\n              account_id: \\\"acct-9\\\",\\n              plan_code: \\\"pro\\\",\\n              seat_band: \\\"multi\\\",\\n              billable: true\\n            }\\n     left:  %{\\n              account_id: \\\"acct-9\\\",\\n              billable: false,\\n              plan_code: \\\"pro\\\",\\n              seat_band: \\\"single\\\"\\n            }\\n     right: %{\\n              account_id: \\\"acct-9\\\",\\n              billable: true,\\n              plan_code: \\\"pro\\\",\\n              seat_band: \\\"multi\\\"\\n            }\\n     stacktrace:\\n       test/warehouse_event_test.exs:5: (test)\\n\\n\\n\\n  2) test billing boundary emits the premium API code and paid amounts (PlanSync.BillingPayloadTest)\\n     test/billing_payload_test.exs:4\\...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/plan_sync/contract.ex <<'EOF'\ndefmodule PlanSync.Contract do\n  @moduledoc false\n\n  @paid_plans [\"team\", \"enterprise\", \"pro\", \"premium\"]\n\n  def paid_plan?(plan), do: plan in @paid_plans\n\n  def billing_plan_code(plan) do\n    if paid_plan?(plan), do: \"premium\", else: \"free\"\n  end\n\n  def warehouse_plan_code(plan) do\n    if paid_plan?(plan), do: \"pro\", else: \"free\"\n  end\n\n  def amount_cents(plan) do\n    if paid_plan?(plan), do: 4900, else: 0\n  end\n\n  def included_seats(plan) do\n    if paid_plan?(plan), do: 25, else: 1\n  end\n\n  def seat_band(plan) do\n    if paid_plan?(plan), do: \"multi\", else: \"single\"\n  end\n\n  def billable?(plan), do: paid_plan?(plan)\nend\nEOF\n\ncat > lib/plan_sync/billing_payload.ex <<'EOF'\ndefmodule PlanSync.BillingPayload do\n  @moduledoc false\n\n  alias PlanSync.Contract\n\n  def build(attrs) do\n    plan = Map.fetch!(attrs, :plan)\n\n    %{\n      customer: Map.fetch!(attrs, :customer),\n      plan: Contract.billing_plan_code(plan),\n      amount_cents: Contract.amount_cents(plan),\n      included_seats: Contract.included_seats(plan)\n    }\n  end\nend\nEOF\n\ncat > lib/plan_sync/warehouse_event.ex <<'EOF'\ndefmodule PlanSync.WarehouseEvent do\n  @moduledoc false\n\n  alias PlanSync.Contract\n\n  def build(attrs) do\n    plan = Map.fetch!(attrs, :plan)\n\n    %{\n      account_id: Map.fetch!(attrs, :account_id),\n      plan_code: Contract.warehouse_plan_code(plan),\n      seat_band: Contract.seat_band(plan),\n      billable: Contract.billable?(plan)\n    }\n  end\nend\nEOF"
+                },
+                "index": 3,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:09:04.989506Z",
+                "summary": "",
+                "tool": "shell"
+              }
+            ],
+            "goal_id": "ohqDSgXIgXs_kunc",
+            "turn_result": "ok",
+            "duration_ms": 52273,
+            "last_assistant_message": "G-V-R success check passed."
+          },
+          "runner_mode": "gvr",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 2,
+            "goal_closure": true
+          }
+        },
+        {
+          "status": "closed",
+          "run": 3,
+          "result": {
+            "closed": true,
+            "status": "closed",
+            "depth": 2,
+            "runner_mode": "gvr",
+            "project_id": "negupza4_r-F_Mik",
+            "agent_id": "gvr-Kq9gRZjqIpO_DFGw",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && sed -n '1,240p' README.md lib/plan_sync/contract.ex lib/plan_sync/billing_payload.ex lib/plan_sync/warehouse_event.ex test/billing_payload_test.exs test/warehouse_event_test.exs"
+                },
+                "index": 1,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:09:20.664014Z",
+                "summary": "# Plan Sync Refactor\n\nThe shared business concept is a paid team plan. It has two boundary\nencodings:\n\n- Billing API code: `premium`\n- Warehouse event code: `pro`\n\nPaid team plans cost 4900 cents and include 25 seats. Warehouse events for\npaid plans must be billable and use seat band `multi`.\n\nThe current contract wrongly exposes one string as if every boundary used\nthe same code. Fix the shared contract, then update the two boundary\nmodules to consume explicit contract fields/functions.\ndefmodule PlanSync.Contract do\n  @moduledoc false\n\n  def canonical_plan(plan) when plan in [\"team\", \"enterprise\", \"pro\", \"premium\"], do: \"pro\"\n  def canonical_plan(_plan), do: \"free\"\n\n  def amount_cents(\"pro\"), do: 0\n  def amount_cents(_plan), do: 0\n\n  def included_seats(\"pro\"), do: 5\n  def included_seats(_plan), do: 1\n\n  def seat_band(\"pro\"), do: \"single\"\n  def seat_band(_plan), do: \"single\"\n\n  def billable?(\"pro\"), do: false\n  def billable?(_plan), do: false\nend\ndefmodule PlanSync.BillingPayload do\n ...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && mix test"
+                },
+                "index": 2,
+                "status": "error",
+                "timestamp": "2026-06-20T18:09:22.457649Z",
+                "summary": "\"Exit code 2:\\n\\n\\n  1) test warehouse boundary keeps the pro event code for paid plans (PlanSync.WarehouseEventTest)\\n     test/warehouse_event_test.exs:4\\n     Assertion with == failed\\n     code:  assert PlanSync.WarehouseEvent.build(%{account_id: \\\"acct-9\\\", plan: \\\"team\\\"}) == %{\\n              account_id: \\\"acct-9\\\",\\n              plan_code: \\\"pro\\\",\\n              seat_band: \\\"multi\\\",\\n              billable: true\\n            }\\n     left:  %{\\n              account_id: \\\"acct-9\\\",\\n              billable: false,\\n              plan_code: \\\"pro\\\",\\n              seat_band: \\\"single\\\"\\n            }\\n     right: %{\\n              account_id: \\\"acct-9\\\",\\n              billable: true,\\n              plan_code: \\\"pro\\\",\\n              seat_band: \\\"multi\\\"\\n            }\\n     stacktrace:\\n       test/warehouse_event_test.exs:5: (test)\\n\\n\\n\\n  2) test billing boundary emits the premium API code and paid amounts (PlanSync.BillingPayloadTest)\\n     test/billing_payload_test.exs:4\\...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "set -e\ncd /workspace\ncat > lib/plan_sync/contract.ex <<'EOF'\ndefmodule PlanSync.Contract do\n  @moduledoc false\n\n  @paid_plan_inputs ~w(team enterprise pro premium)\n\n  def canonical_plan(plan) when plan in @paid_plan_inputs, do: :paid_team\n  def canonical_plan(_plan), do: :free\n\n  def billing_plan_code(:paid_team), do: ~s(premium)\n  def billing_plan_code(:free), do: ~s(free)\n  def billing_plan_code(plan), do: plan |> canonical_plan() |> billing_plan_code()\n\n  def warehouse_plan_code(:paid_team), do: ~s(pro)\n  def warehouse_plan_code(:free), do: ~s(free)\n  def warehouse_plan_code(plan), do: plan |> canonical_plan() |> warehouse_plan_code()\n\n  def amount_cents(:paid_team), do: 4900\n  def amount_cents(:free), do: 0\n  def amount_cents(plan), do: plan |> canonical_plan() |> amount_cents()\n\n  def included_seats(:paid_team), do: 25\n  def included_seats(:free), do: 1\n  def included_seats(plan), do: plan |> canonical_plan() |> included_seats()\n\n  def seat_band(:paid_team), do: ~s(multi)\n  def seat_band(:free), do: ~s(single)\n  def seat_band(plan), do: plan |> canonical_plan() |> seat_band()\n\n  def billable?(:paid_team), do: true\n  def billable?(:free), do: false\n  def billable?(plan), do: plan |> canonical_plan() |> billable?()\nend\nEOF\ncat > lib/plan_sync/billing_payload.ex <<'EOF'\ndefmodule PlanSync.BillingPayload do\n  @moduledoc false\n\n  alias PlanSync.Contract\n\n  def build(attrs) do\n    contract = attrs |> Map.fetch!(:plan) |> Contract.canonical_plan()\n\n    %{\n      customer: Map.fetch!(attrs, :customer),\n      plan: Contract.billing_plan_code(contract),\n      amount_cents: Contract.amount_cents(contract),\n      included_seats: Contract.included_seats(contract)\n    }\n  end\nend\nEOF\ncat > lib/plan_sync/warehouse_event.ex <<'EOF'\ndefmodule PlanSync.WarehouseEvent do\n  @moduledoc false\n\n  alias PlanSync.Contract\n\n  def build(attrs) do\n    contract = attrs |> Map.fetch!(:plan) |> Contract.canonical_plan()\n\n    %{\n      account_id: Map.fetch!(attrs, :account_id),\n      plan_code..."
+                },
+                "index": 3,
+                "status": "ok",
+                "timestamp": "2026-06-20T18:11:22.619816Z",
+                "summary": "",
+                "tool": "shell"
+              }
+            ],
+            "goal_id": "Kq9gRZjqIpO_DFGw",
+            "turn_result": "ok",
+            "duration_ms": 124946,
+            "last_assistant_message": "G-V-R success check passed."
+          },
+          "runner_mode": "gvr",
+          "score": {
+            "recovery_rate": 0.0,
+            "unattended_depth": 2,
+            "goal_closure": true
+          }
+        }
+      ],
+      "objective": "Repair the seeded plan-sync Mix project in `/workspace`. The billing payload\nand warehouse event need different external plan codes for the same paid-plan\ncontract. Do not chase one failing test at a time by flipping strings in the\nboundary modules; refactor the shared `PlanSync.Contract` so both tests pass\ntogether.\n",
+      "max_steps": 26,
+      "success_check": {
+        "command": "cd /workspace && mix test 2>&1 | grep -q '0 failures'",
+        "type": "shell"
+      },
+      "seed_files": [
+        "mix.exs",
+        "README.md",
+        "lib/plan_sync/contract.ex",
+        "lib/plan_sync/billing_payload.ex",
+        "lib/plan_sync/warehouse_event.ex",
+        "test/test_helper.exs",
+        "test/billing_payload_test.exs",
+        "test/warehouse_event_test.exs"
+      ],
+      "recovery_checks": [],
+      "goal_closure_rate": 1.0,
+      "median_score": {
+        "recovery_rate": 0.0,
+        "unattended_depth": 2
+      },
+      "runner_mode": "gvr"
+    }
+  ],
+  "categories": {
+    "development": {
+      "goal_closure_rate": 1.0,
+      "benchmark_count": 2,
+      "recovery_rate": 0.0,
+      "unattended_depth": 4.5,
+      "recovery_injected_count": 0,
+      "recovery_recovered_count": 0
+    },
+    "operation": {
+      "goal_closure_rate": 1.0,
+      "benchmark_count": 1,
+      "recovery_rate": 0.0,
+      "unattended_depth": 1,
+      "recovery_injected_count": 0,
+      "recovery_recovered_count": 0
+    }
+  },
+  "generated_at": "2026-06-20T18:11:34.684415Z",
+  "runs_per_benchmark": 3,
+  "summary": {
+    "goal_closure_rate": 1.0,
+    "recovery_rate": 0.0,
+    "unattended_depth": 2,
+    "recovery_injected_count": 0,
+    "recovery_recovered_count": 0
+  }
+}

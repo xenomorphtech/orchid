@@ -19,6 +19,7 @@ defmodule Mix.Tasks.Orchid.Autonomy do
           runs: :integer,
           mode: :string,
           max_rounds: :integer,
+          planner_iterations: :integer,
           max_delegate_depth: :integer,
           gvr_memoize: :boolean,
           only: :string,
@@ -47,12 +48,13 @@ defmodule Mix.Tasks.Orchid.Autonomy do
   end
 
   # Translate CLI bounding flags into Runner opts. Only includes a key when the
-  # flag was passed, so the Runner's own defaults (gvr_max_rounds 6,
-  # gvr_max_delegate_depth 3) still apply when unset. Bounding these makes the
-  # G-V-R recursive delegate*revise call count tractable on a slow free model.
+  # flag was passed, so the Runner's own defaults still apply when unset.
+  # Bounding these makes the G-V-R recursive delegate*revise call count
+  # tractable on a slow model.
   defp build_runner_opts(opts) do
     []
     |> maybe_put_opt(:gvr_max_rounds, Keyword.get(opts, :max_rounds))
+    |> maybe_put_opt(:gvr_planner_max_iterations, Keyword.get(opts, :planner_iterations))
     |> maybe_put_opt(:gvr_max_delegate_depth, Keyword.get(opts, :max_delegate_depth))
     |> maybe_put_opt(:gvr_llm_memoize, Keyword.get(opts, :gvr_memoize))
   end

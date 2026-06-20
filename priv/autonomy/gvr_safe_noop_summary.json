@@ -1,0 +1,36 @@
+{
+  "generated_at": "2026-06-20T18:12:02Z",
+  "status": "settled",
+  "target": "min(gvr_closure - flat_closure) >= 0",
+  "model_proof": "provider=codex model=gpt-5.5",
+  "flat_report": "priv/autonomy/gvr_safe_noop_flat.json",
+  "gvr_report": "priv/autonomy/gvr_safe_noop_gvr.json",
+  "runs_per_benchmark": 3,
+  "benchmarks": [
+    {
+      "id": "budget_constrained_build_order",
+      "flat_closure": 1.0,
+      "gvr_closure": 1.0,
+      "delta": 0
+    },
+    {
+      "id": "garden_path_diagnosis",
+      "flat_closure": 1.0,
+      "gvr_closure": 1.0,
+      "delta": 0
+    },
+    {
+      "id": "oscillating_constraint_refactor",
+      "flat_closure": 1.0,
+      "gvr_closure": 1.0,
+      "delta": 0
+    }
+  ],
+  "min_delta": 0,
+  "no_regression_controls": true,
+  "budget_constrained_build_order": {
+    "before_gvr_closure": 0.0,
+    "after_gvr_closure": 1.0,
+    "n": 3
+  }
+}

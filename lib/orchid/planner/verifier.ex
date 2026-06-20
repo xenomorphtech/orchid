@@ -35,7 +35,7 @@ defmodule Orchid.Planner.Verifier do
   def verify(objective, tasks, opts) when is_binary(objective) and is_list(tasks) do
     opts = normalize_opts(opts)
     plan_json = encode_tasks(tasks)
-    prompt = user_prompt(objective, plan_json, workspace_context(opts))
+    prompt = user_prompt(objective, plan_json, workspace_context(opts), opts)
 
     system = system_prompt()
 
@@ -100,7 +100,9 @@ defmodule Orchid.Planner.Verifier do
     |> String.trim()
   end
 
-  defp user_prompt(objective, plan_json, workspace_context) do
+  defp user_prompt(objective, plan_json, workspace_context, opts) do
+    execution_budget_note = execution_budget_note(opts)
+
     """
     OBJECTIVE:
     #{objective}
@@ -110,6 +112,8 @@ defmodule Orchid.Planner.Verifier do
 
     WORKSPACE CONTEXT:
     #{workspace_context}
+
+    #{execution_budget_note}
 
     Return exactly one JSON object:
     {
@@ -121,6 +125,35 @@ defmodule Orchid.Planner.Verifier do
     }
     """
     |> String.trim()
+  end
+
+  defp execution_budget_note(opts) do
+    remaining = Map.get(opts, :execution_step_budget_remaining)
+    total = Map.get(opts, :execution_step_budget_total)
+
+    if is_integer(remaining) do
+      total_text = if is_integer(total), do: " of #{total}", else: ""
+
+      """
+      EXECUTION STEP BUDGET:
+      Planner generation, verification, and revision are outside the executor
+      step budget. The executor has #{remaining}#{total_text} successful tool
+      step(s) remaining. Delegate tasks recursively plan and execute their own
+      tools, so treat delegate-heavy plans as expensive under tight budgets. If
+      the objective, workspace context, or completed history already names files
+      and commands, require concrete read/list/grep/shell/edit/tool tasks rather
+      than delegation. A plan that stops at a partial subsystem while the
+      acceptance check still requires downstream work is flawed unless it
+      explicitly schedules the downstream work or a follow-up verification path.
+      A plan is also flawed when an edit or shell write relies on file contents,
+      constants, APIs, or expected outputs that are only read by earlier tasks in
+      the same array and are not already present in the objective or completed
+      history; require an inspection-only round followed by replanning instead.
+      """
+      |> String.trim()
+    else
+      ""
+    end
   end
 
   defp llm_text_with_output_retry(system, user, opts, attempt, max_attempts) do
