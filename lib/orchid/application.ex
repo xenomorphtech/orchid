@@ -16,6 +16,9 @@ defmodule Orchid.Application do
       write_concurrency: true
     ])
 
+    # Fixed-size in-memory event log for planner/agent/CLI lifecycle traces
+    Orchid.EventLog.setup!()
+
     children = [
       # ETS-backed storage for objects and agent state
       Orchid.Store,
