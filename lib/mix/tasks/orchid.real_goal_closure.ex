@@ -1063,24 +1063,21 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
   end
 
   defp ensure_distributed_node! do
+    expected = :"orchid@127.0.0.1"
+
     case Node.self() do
       :nonode@nohost ->
-        case Node.start(:"orchid@127.0.0.1") do
-          {:ok, _pid} ->
-            :ok
-
-          {:error, {:already_started, _pid}} ->
-            :ok
-
-          {:error, reason} ->
-            Mix.raise("failed to start distributed node orchid@127.0.0.1: #{inspect(reason)}")
+        case Node.start(expected) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, reason} -> Mix.raise("failed to start #{expected}: #{inspect(reason)}")
         end
 
-      :"orchid@127.0.0.1" ->
+      ^expected ->
         :ok
 
       other ->
-        Mix.raise("real-goal closure must run as orchid@127.0.0.1, got #{inspect(other)}")
+        Mix.raise("expected node #{expected} for Orchid MCP bridge, got #{other}")
     end
   end
 
@@ -1110,6 +1107,8 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       {:ok, _stats} ->
         :ok
     end
+
+    :ok
   end
 
   defp force_closure_model_templates! do

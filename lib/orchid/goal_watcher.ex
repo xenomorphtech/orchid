@@ -612,8 +612,7 @@ defmodule Orchid.GoalWatcher do
         else: config
 
     if mode == :gvr do
-      config
-      |> Map.merge(@planner_llm_config)
+      Map.merge(config, @planner_llm_config)
     else
       config
     end

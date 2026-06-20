@@ -326,9 +326,7 @@ defmodule Orchid.LLM.Codex do
     if run_in_container?(config), do: "danger-full-access", else: "workspace-write"
   end
 
-  defp bypass_approvals_and_sandbox?(config) do
-    if run_in_container?(config), do: true, else: nil
-  end
+  defp bypass_approvals_and_sandbox?(config), do: run_in_container?(config)
 
   defp config_overrides_for(config) do
     if config[:use_orchid_tools] do
@@ -510,14 +508,13 @@ defmodule Orchid.LLM.Codex do
     real_home = System.get_env("CODEX_HOME") || Path.expand("~/.codex")
 
     if File.dir?(real_home) do
-      ~w(auth.json installation_id version.json)
-      |> Enum.each(fn entry ->
+      for entry <- ~w(auth.json installation_id version.json) do
         source = Path.join(real_home, entry)
 
         if File.regular?(source) do
           File.cp!(source, Path.join(home, entry))
         end
-      end)
+      end
     end
   end
 

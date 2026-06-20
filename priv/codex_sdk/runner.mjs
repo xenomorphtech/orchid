@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import path from "node:path";
 import { spawn } from "node:child_process";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -16,6 +16,12 @@ function readRequest() {
   }
 
   return JSON.parse(raw);
+}
+
+function compactObject(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => item !== undefined && item !== null),
+  );
 }
 
 function formatError(error) {
@@ -38,111 +44,144 @@ function codexPath() {
   return "codex";
 }
 
-function pushConfig(args, key, value) {
-  if (value === undefined || value === null || value === "") {
-    return;
+function tomlValue(value) {
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
   }
 
-  args.push("-c", `${key}=${JSON.stringify(value)}`);
+  if (typeof value === "number") {
+    return String(value);
+  }
+
+  return JSON.stringify(String(value));
 }
 
-function pushConfigOverrides(args, value, prefix = "") {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return;
+function flattenConfig(value, prefix = []) {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return [[prefix.join("."), value]];
   }
 
-  for (const [key, item] of Object.entries(value)) {
-    const path = prefix ? `${prefix}.${key}` : key;
+  return Object.entries(value).flatMap(([key, nested]) => flattenConfig(nested, [...prefix, key]));
+}
 
-    if (item && typeof item === "object" && !Array.isArray(item)) {
-      pushConfigOverrides(args, item, path);
-    } else {
-      pushConfig(args, path, item);
+function codexArgs(request, outputPath) {
+  const args = [
+    "exec",
+    "--json",
+    "--color",
+    "never",
+    "--output-last-message",
+    outputPath,
+  ];
+
+  if (request.bypassApprovalsAndSandbox) {
+    args.push("--dangerously-bypass-approvals-and-sandbox");
+  }
+
+  if (request.configOverrides) {
+    for (const [key, value] of flattenConfig(request.configOverrides)) {
+      args.push("--config", `${key}=${tomlValue(value)}`);
     }
   }
-}
-
-function buildArgs(request, outputPath) {
-  const args = ["exec", "--json", "--color", "never", "--output-last-message", outputPath];
 
   if (request.model) {
-    args.push("-m", request.model);
+    args.push("--model", request.model);
+  }
+
+  if (request.sandboxMode && !request.bypassApprovalsAndSandbox) {
+    args.push("--sandbox", request.sandboxMode);
   }
 
   if (request.workingDirectory) {
-    args.push("-C", request.workingDirectory);
+    args.push("--cd", request.workingDirectory);
+  }
+
+  if (request.additionalDirectories?.length) {
+    for (const directory of request.additionalDirectories) {
+      args.push("--add-dir", directory);
+    }
   }
 
   if (request.skipGitRepoCheck) {
     args.push("--skip-git-repo-check");
   }
 
-  if (request.bypassApprovalsAndSandbox) {
-    args.push("--dangerously-bypass-approvals-and-sandbox");
-  } else if (request.sandboxMode) {
-    args.push("-s", request.sandboxMode);
-  }
-
   if (request.modelReasoningEffort) {
-    pushConfig(args, "model_reasoning_effort", request.modelReasoningEffort);
+    args.push("--config", `model_reasoning_effort=${tomlValue(request.modelReasoningEffort)}`);
   }
 
-  pushConfigOverrides(args, request.configOverrides);
+  if (request.networkAccessEnabled !== undefined) {
+    args.push(
+      "--config",
+      `sandbox_workspace_write.network_access=${tomlValue(request.networkAccessEnabled)}`,
+    );
+  }
+
+  if (request.webSearchMode) {
+    args.push("--config", `web_search=${tomlValue(request.webSearchMode)}`);
+  } else if (request.webSearchEnabled === true) {
+    args.push("--config", 'web_search="live"');
+  } else if (request.webSearchEnabled === false) {
+    args.push("--config", 'web_search="disabled"');
+  }
+
+  if (request.approvalPolicy && !request.bypassApprovalsAndSandbox) {
+    args.push("--config", `approval_policy=${tomlValue(request.approvalPolicy)}`);
+  }
+
   args.push("-");
   return args;
 }
 
-function parseEvents(stdout) {
+function parseCodexJsonl(output) {
   const events = [];
+  const items = [];
+  let finalResponse = "";
+  let threadId = null;
+  let usage = null;
+  let failure = null;
 
-  for (const line of stdout.split(/\r?\n/)) {
+  for (const line of output.split("\n")) {
     const trimmed = line.trim();
 
     if (trimmed === "") {
       continue;
     }
 
+    let event;
+
     try {
-      events.push(JSON.parse(trimmed));
+      event = JSON.parse(trimmed);
     } catch {
-      events.push({ type: "raw", text: trimmed });
-    }
-  }
-
-  return events;
-}
-
-function findUsage(events) {
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    if (events[i] && typeof events[i] === "object" && events[i].usage) {
-      return events[i].usage;
-    }
-  }
-
-  return null;
-}
-
-function findThreadId(events) {
-  for (const event of events) {
-    if (!event || typeof event !== "object") {
       continue;
     }
 
-    if (event.thread_id) {
-      return event.thread_id;
-    }
+    events.push(event);
 
-    if (event.threadId) {
-      return event.threadId;
+    if (event.type === "thread.started") {
+      threadId = event.thread_id;
+    } else if (event.type === "item.completed") {
+      items.push(event.item);
+
+      if (event.item?.type === "agent_message") {
+        finalResponse = event.item.text || "";
+      }
+    } else if (event.type === "turn.completed") {
+      usage = event.usage;
+    } else if (event.type === "turn.failed") {
+      failure = event.error;
     }
   }
 
-  return null;
+  if (failure) {
+    throw new Error(failure.message || JSON.stringify(failure));
+  }
+
+  return { events, items, finalResponse, threadId, usage };
 }
 
-function runCodex(request, outputPath) {
-  const args = buildArgs(request, outputPath);
-  const child = spawn(codexPath(), args, {
+async function runCodex(request, outputPath) {
+  const child = spawn(codexPath(), codexArgs(request, outputPath), {
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -150,31 +189,37 @@ function runCodex(request, outputPath) {
   let stdout = "";
   let stderr = "";
 
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
     stdout += chunk;
   });
+
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
+
   child.stdin.end(request.prompt || "");
 
-  return new Promise((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", (code) => {
-      const events = parseEvents(stdout);
-      const content = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
-
-      resolve({
-        code,
-        stdout,
-        stderr,
-        events,
-        content,
-      });
-    });
+  const exitCode = await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => resolve(code ?? 1));
   });
+
+  if (exitCode !== 0) {
+    throw new Error(`codex exited with status ${exitCode}: ${(stderr || stdout).trim()}`);
+  }
+
+  const turn = parseCodexJsonl(stdout);
+  const content = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
+
+  return {
+    ok: true,
+    content: content || turn.finalResponse,
+    items: turn.items,
+    events: turn.events,
+    threadId: turn.threadId,
+    usage: turn.usage,
+    stderr: stderr.trim(),
+  };
 }
 
 async function main() {
@@ -183,32 +228,8 @@ async function main() {
   const outputPath = path.join(dir, "last-message.txt");
 
   try {
-    const result = await runCodex(request, outputPath);
-
-    if (result.code === 0) {
-      process.stdout.write(
-        JSON.stringify({
-          ok: true,
-          content: result.content,
-          items: result.events,
-          events: result.events,
-          threadId: findThreadId(result.events),
-          usage: findUsage(result.events),
-          stderr: result.stderr,
-        }),
-      );
-    } else {
-      process.stdout.write(
-        JSON.stringify({
-          ok: false,
-          error: result.stderr || result.stdout || `codex exited with status ${result.code}`,
-          items: result.events,
-          events: result.events,
-          stderr: result.stderr,
-        }),
-      );
-      process.exitCode = result.code || 1;
-    }
+    const turn = await runCodex(request, outputPath);
+    process.stdout.write(JSON.stringify(compactObject(turn)));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
