@@ -9,7 +9,8 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
   alias Orchid.{Agent, GoalWatcher, Object, Project, Projects, Sandbox}
 
   @shortdoc "Run the Orchid real-goal closure harness"
-  @default_out Path.join(["priv", "autonomy", "real_goal_closure.json"])
+  @real_default_out Path.join(["priv", "autonomy", "real_goal_closure.json"])
+  @gvr_default_out Path.join(["priv", "autonomy", "gvr_real_goal_closure.json"])
   @default_goal_timeout_ms 720_000
   @default_success_timeout_ms 30_000
   @poll_interval_ms 5_000
@@ -19,6 +20,12 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
 
   @impl Mix.Task
   def run(args) do
+    run_suite(:real, args)
+  end
+
+  def run_suite(suite_key, args) when suite_key in [:real, :gvr] do
+    suite = suite_config!(suite_key)
+
     {opts, _argv, invalid} =
       OptionParser.parse(args,
         strict: [
@@ -32,7 +39,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     reject_invalid_options!(invalid)
 
     repo_cwd = File.cwd!()
-    output_path = opts |> Keyword.get(:out, @default_out) |> validate_output_path!()
+    output_path = opts |> Keyword.get(:out, suite.default_out) |> validate_output_path!()
     output_file = Path.expand(output_path, repo_cwd)
 
     goal_timeout_ms =
@@ -62,7 +69,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
         seed_facts!()
         force_free_model_templates!()
 
-        definitions = real_goals()
+        definitions = suite.goals
 
         goals =
           Enum.map(definitions, fn definition ->
@@ -71,7 +78,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
           end)
 
         File.cd!(repo_cwd)
-        report = build_report(goals, definitions, data_dir, output_file, started_at)
+        report = build_report(goals, definitions, data_dir, output_file, started_at, suite)
         write_report!(report, output_file)
         report
       after
@@ -89,7 +96,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       end
 
     Mix.shell().info(
-      "orchid.real_goal_closure: closed #{report.closed_count}/#{report.n_goals}; " <>
+      "#{suite.task_name}: closed #{report.closed_count}/#{report.n_goals}; " <>
         "wrote #{output_path}"
     )
   end
@@ -182,6 +189,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       {:error, reason} ->
         %{
           id: definition.id,
+          route_mode: nil,
           closed: false,
           nudges: 0,
           failure_mode: "fixture_error: #{truncate(inspect(reason), 800)}",
@@ -275,6 +283,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
 
     %{
       id: definition.id,
+      route_mode: decision.mode,
       closed: closed,
       nudges: 0,
       failure_mode: failure_mode,
@@ -315,6 +324,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
 
     %{
       id: definition.id,
+      route_mode: decision.mode,
       closed: false,
       nudges: 0,
       failure_mode: failure_mode,
@@ -335,13 +345,15 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     }
   end
 
-  defp build_report(goals, definitions, data_dir, output_path, started_at) do
+  defp build_report(goals, definitions, data_dir, output_path, started_at, suite) do
     closed_count = Enum.count(goals, & &1.closed)
+    gvr_closed_count = gvr_closed_count(goals)
 
     %{
       generated_at: DateTime.utc_now() |> DateTime.to_iso8601(),
-      harness: "Mix.Tasks.Orchid.RealGoalClosure",
-      harness_path: "lib/mix/tasks/orchid.real_goal_closure.ex",
+      harness: suite.harness,
+      harness_path: suite.harness_path,
+      implementation_path: "lib/mix/tasks/orchid.real_goal_closure.ex",
       product_entry: "Orchid.GoalWatcher",
       route_contract:
         "GoalWatcher.runtime_planner_request -> RuntimeGoal.from_goal_watcher -> Router -> planner",
@@ -351,25 +363,23 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       report_path: output_path,
       n_goals: length(definitions),
       closed_count: closed_count,
-      criteria: %{
-        ran_all_3: length(goals) == 3,
-        at_least_1_closed_with_zero_nudges:
-          closed_count >= 1 and Enum.any?(goals, &(&1.closed and &1.nudges == 0)),
-        all_success_checks_external: true
-      },
+      gvr_closed_count: gvr_closed_count,
+      criteria: criteria(suite.key, goals, closed_count, gvr_closed_count),
       goals: goals,
       duration_ms: monotonic_ms() - started_at
     }
   end
 
   defp create_fixture(definition) do
+    max_steps = Map.get(definition, :max_steps, 8)
+
     with {:ok, project} <-
            Object.create(:project, definition.project_name, String.trim(definition.project_brief),
              metadata: %{
                status: :active,
                objective: definition.objective,
                success_criteria: "shell: #{definition.success_check}",
-               max_steps: 8
+               max_steps: max_steps
              }
            ),
          {:ok, goal} <-
@@ -378,7 +388,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
                project_id: project.id,
                status: :pending,
                depends_on: [],
-               max_steps: 8
+               max_steps: max_steps
              }
            ),
          {:ok, workspace} <- Project.ensure_dir(project.id),
@@ -436,6 +446,55 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     after
       File.cd!(repo_cwd)
     end
+  end
+
+  defp suite_config!(:real) do
+    %{
+      key: :real,
+      task_name: "orchid.real_goal_closure",
+      harness: "Mix.Tasks.Orchid.RealGoalClosure",
+      harness_path: "lib/mix/tasks/orchid.real_goal_closure.ex",
+      default_out: @real_default_out,
+      goals: real_goals()
+    }
+  end
+
+  defp suite_config!(:gvr) do
+    %{
+      key: :gvr,
+      task_name: "orchid.gvr_real_goal_closure",
+      harness: "Mix.Tasks.Orchid.GvrRealGoalClosure",
+      harness_path: "lib/mix/tasks/orchid.gvr_real_goal_closure.ex",
+      default_out: @gvr_default_out,
+      goals: gvr_real_goals()
+    }
+  end
+
+  defp criteria(:real, goals, closed_count, _gvr_closed_count) do
+    %{
+      ran_all_3: length(goals) == 3,
+      at_least_1_closed_with_zero_nudges:
+        closed_count >= 1 and Enum.any?(goals, &(&1.closed and &1.nudges == 0)),
+      all_success_checks_external: true
+    }
+  end
+
+  defp criteria(:gvr, goals, _closed_count, gvr_closed_count) do
+    %{
+      at_least_1_gvr_closed_with_zero_nudges: gvr_closed_count >= 1,
+      all_success_checks_external: true,
+      all_goals_routed_gvr: Enum.all?(goals, &(&1.route_mode == :gvr)),
+      all_route_inputs_match_runtime_goal:
+        Enum.all?(goals, fn goal ->
+          get_in(goal, [:route, :route_input_matches_runtime_goal]) == true
+        end)
+    }
+  end
+
+  defp gvr_closed_count(goals) do
+    Enum.count(goals, fn goal ->
+      goal.closed and goal.nudges == 0 and goal.route_mode == :gvr
+    end)
   end
 
   defp real_goals do
@@ -550,6 +609,57 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
           %{
             path: "data/status.txt",
             content: "state=open\n"
+          }
+        ]
+      }
+    ]
+  end
+
+  defp gvr_real_goals do
+    [
+      %{
+        id: "delta_dependency_order_refactor",
+        project_name: "GVR Real Goal Delta Dependency Order",
+        objective:
+          "Refactor the deployment stage ordering under explicit constraints and dependency sequencing.",
+        project_brief: """
+        Real external GVR goal delta.
+        The accepted final state is config/stages.txt containing exactly three
+        ordered lines. The dependency constraints are: build before test, test
+        before deploy, and no extra lines.
+        """,
+        goal_name: "Close delta dependency order refactor",
+        goal_description: """
+        Use the product worker path to close this constrained ordering task.
+
+        Create exactly one Shell Operator child goal. The child goal must
+        refactor /workspace/config/stages.txt so the dependency sequence is
+        exactly:
+        build
+        test
+        deploy
+
+        The child goal must preserve only those three ordered lines and run:
+        cd /workspace && test -f config/stages.txt && printf 'build\\ntest\\ndeploy\\n' | cmp -s config/stages.txt -
+
+        The child goal must call task_report_result with outcome "success",
+        mark_completed true, and command evidence.
+
+        When the child goal is completed, call task_report_result for this
+        parent goal with outcome "success", mark_completed true, and include
+        the child goal id plus the cmp result. Do not create extra child goals.
+        """,
+        success_check:
+          "cd /workspace && test -f config/stages.txt && printf 'build\\ntest\\ndeploy\\n' | cmp -s config/stages.txt -",
+        max_steps: 8,
+        seed_files: [
+          %{
+            path: "README.md",
+            content: "GVR real goal delta: refactor config/stages.txt into dependency order.\n"
+          },
+          %{
+            path: "config/stages.txt",
+            content: "deploy\ntest\nbuild\n"
           }
         ]
       }
