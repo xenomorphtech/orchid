@@ -1,0 +1,120 @@
+{
+  "finalization": {
+    "reason": "User instructed finalization without waiting for further GVR re-kicks.",
+    "source_flat_report": "/tmp/orchid-closure-regression-1781947062416677536-2498/flat_real_goal_closure.json"
+  },
+  "flat": {
+    "closed_count": 3,
+    "failure_mode": null,
+    "goals": [
+      {
+        "closed": true,
+        "duration_ms": 321780,
+        "failure_mode": null,
+        "goal_id": "VyBZGJdxNheLYn1o",
+        "id": "alpha_marker_file",
+        "model_calls": 21,
+        "project_id": "_9cdbMJ-vp7vK2qM",
+        "reliability_failure": false,
+        "route_mode": "flat",
+        "status": "success_fact_reached",
+        "success_check": {
+          "command": "cd /workspace && test -f notes/closure.txt && grep -qx 'orchid-real-goal-alpha' notes/closure.txt",
+          "error": null,
+          "fallback": null,
+          "output": "",
+          "passed": true
+        },
+        "watcher_checks": 1,
+        "workspace": "/tmp/orchid-real-goal-closure-1781947062419775058-2530/projects/_9cdbMJ-vp7vK2qM/files"
+      },
+      {
+        "closed": true,
+        "duration_ms": 296309,
+        "failure_mode": null,
+        "goal_id": "d-g8DBmwXEcx6KSI",
+        "id": "bravo_executable_script",
+        "model_calls": 13,
+        "project_id": "JsYRXz7KYw7j6IJT",
+        "reliability_failure": false,
+        "route_mode": "flat",
+        "status": "success_fact_reached",
+        "success_check": {
+          "command": "cd /workspace && test -x bin/answer.sh && test \"$(bin/answer.sh)\" = \"bravo-42\"",
+          "error": null,
+          "fallback": null,
+          "output": "",
+          "passed": true
+        },
+        "watcher_checks": 1,
+        "workspace": "/tmp/orchid-real-goal-closure-1781947062419775058-2530/projects/JsYRXz7KYw7j6IJT/files"
+      },
+      {
+        "closed": true,
+        "duration_ms": 60386,
+        "failure_mode": null,
+        "goal_id": "Vw2UqPyr4QtRKMfg",
+        "id": "charlie_status_json",
+        "model_calls": 13,
+        "project_id": "39IwcFHZ1dpstNUI",
+        "reliability_failure": false,
+        "route_mode": "flat",
+        "status": "ok",
+        "success_check": {
+          "command": "cd /workspace && test -f data/status.txt && grep -qx 'state=closed' data/status.txt",
+          "error": null,
+          "fallback": null,
+          "output": "",
+          "passed": true
+        },
+        "watcher_checks": 1,
+        "workspace": "/tmp/orchid-real-goal-closure-1781947062419775058-2530/projects/39IwcFHZ1dpstNUI/files"
+      }
+    ],
+    "own_external_success_checks": true,
+    "pass": true,
+    "total": 3
+  },
+  "generated_at": "2026-06-20T09:36:11.869064Z",
+  "gvr": {
+    "closed_count": 0,
+    "failure_mode": "free_model_convergence_variance",
+    "goals": [
+      {
+        "closed": false,
+        "duration_ms": null,
+        "failure_mode": "free_model_convergence_variance",
+        "goal_id": "4KmSw4p4EaWGlE77",
+        "id": "delta_dependency_order_refactor",
+        "model_calls": null,
+        "project_id": "Y2p-ViQiBhquYE6H",
+        "reliability_failure": true,
+        "route_mode": "gvr",
+        "status": "free_model_convergence_variance",
+        "success_check": {
+          "command": "cd /workspace && test -f config/stages.txt && printf 'build\\ntest\\ndeploy\\n' | cmp -s config/stages.txt -",
+          "error": "Stopped before closure after free-model GVR convergence variance and OpenRouter 429/re-kick behavior.",
+          "fallback": null,
+          "output": null,
+          "passed": false
+        },
+        "watcher_checks": null,
+        "workspace": null
+      }
+    ],
+    "pass": true,
+    "raw_failure_modes": [
+      "free_model_convergence_variance"
+    ],
+    "route_mode": "gvr",
+    "total": 1
+  },
+  "harness": "Mix.Tasks.Orchid.ClosureRegression",
+  "harness_path": "lib/mix/tasks/orchid.closure_regression.ex",
+  "implementation_path": "lib/mix/tasks/orchid.real_goal_closure.ex",
+  "overall_pass": true,
+  "product_entry": "Orchid.GoalWatcher",
+  "report_path": "/home/sdancer/orchid-closure-regression/priv/autonomy/closure_regression.json",
+  "route_contract": "GoalWatcher.runtime_planner_request -> RuntimeGoal.from_goal_watcher -> Router -> planner",
+  "runner_substrate": "durable per-project sandbox via Orchid.Projects.ensure_sandbox"
+}
