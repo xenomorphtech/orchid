@@ -18,8 +18,8 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
   @default_reliability_retry_attempts 2
   @poll_interval_ms 5_000
   @completion_grace_ms 120_000
-  @free_provider :openrouter
-  @free_model :nex_n2_pro
+  @closure_provider :codex
+  @closure_model :gpt55
 
   @impl Mix.Task
   def run(args) do
@@ -71,7 +71,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       try do
         seed_templates!()
         seed_facts!()
-        force_free_model_templates!()
+        force_closure_model_templates!()
 
         definitions = suite.goals
 
@@ -175,7 +175,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       try do
         seed_templates!()
         seed_facts!()
-        force_free_model_templates!()
+        force_closure_model_templates!()
 
         definition = gvr_vs_flat_real_goal()
 
@@ -546,7 +546,9 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       route_contract:
         "GoalWatcher.runtime_planner_request -> RuntimeGoal.from_goal_watcher -> Router -> planner",
       runner_substrate: "durable per-project sandbox via Orchid.Projects.ensure_sandbox",
-      model: "openrouter/#{Orchid.LLM.Catalog.resolve_model(@free_model, @free_provider)}",
+      provider: @closure_provider,
+      model_id: @closure_model,
+      model: closure_model_label(),
       data_dir: data_dir,
       report_path: output_path,
       reliability_retry_policy: %{
@@ -583,7 +585,9 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       route_contract:
         "GoalWatcher.runtime_planner_request -> RuntimeGoal.from_goal_watcher -> Router -> planner",
       runner_substrate: "durable per-project sandbox via Orchid.Projects.ensure_sandbox",
-      model: "openrouter/#{Orchid.LLM.Catalog.resolve_model(@free_model, @free_provider)}",
+      provider: @closure_provider,
+      model_id: @closure_model,
+      model: closure_model_label(),
       data_dir: data_dir,
       report_path: output_path,
       goal_id: definition.id,
@@ -644,6 +648,10 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
       watcher_checks: Map.get(result, :watcher_checks),
       duration_ms: Map.get(result, :duration_ms)
     }
+  end
+
+  defp closure_model_label do
+    "#{@closure_provider}/#{Orchid.LLM.Catalog.resolve_model(@closure_model, @closure_provider)}"
   end
 
   defp seed_manifest(seed_files) do
@@ -1010,6 +1018,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
   end
 
   defp start_minimal_runtime! do
+    ensure_distributed_node!()
     ensure_ets!(:orchid_agent_states, [:public, :set, read_concurrency: true])
 
     ensure_ets!(:orchid_agent_runtime, [
@@ -1029,6 +1038,24 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     case Supervisor.start_link(children, strategy: :one_for_one) do
       {:ok, pid} -> pid
       {:error, reason} -> Mix.raise("failed to start minimal runtime: #{inspect(reason)}")
+    end
+  end
+
+  defp ensure_distributed_node! do
+    expected = :"orchid@127.0.0.1"
+
+    case Node.self() do
+      :nonode@nohost ->
+        case Node.start(expected) do
+          {:ok, _pid} -> :ok
+          {:error, reason} -> Mix.raise("failed to start #{expected}: #{inspect(reason)}")
+        end
+
+      ^expected ->
+        :ok
+
+      other ->
+        Mix.raise("expected node #{expected} for Orchid MCP bridge, got #{other}")
     end
   end
 
@@ -1059,14 +1086,12 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
         :ok
     end
 
-    unless Object.get_fact_value("openrouter_api_key") do
-      Mix.raise("openrouter_api_key fact was not loaded")
-    end
+    :ok
   end
 
-  defp force_free_model_templates! do
+  defp force_closure_model_templates! do
     for template <- Object.list_agent_templates() do
-      updates = %{provider: @free_provider, model: @free_model}
+      updates = %{provider: @closure_provider, model: @closure_model}
 
       updates =
         cond do

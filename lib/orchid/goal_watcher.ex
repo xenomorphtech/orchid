@@ -12,14 +12,13 @@ defmodule Orchid.GoalWatcher do
 
   @interval :timer.seconds(10)
   @log_file "priv/data/goal_watcher.log"
-  @critic_config %{
-    provider: :codex,
-    model: :gpt54,
-    model_reasoning_effort: "medium",
-    max_turns: 8,
-    max_tokens: 500,
-    disable_tools: true
-  }
+  @planner_llm_config %{provider: :codex, model: :gpt55}
+  @critic_config Map.merge(@planner_llm_config, %{
+                   model_reasoning_effort: "medium",
+                   max_turns: 8,
+                   max_tokens: 500,
+                   disable_tools: true
+                 })
   @default_output_retry_attempts 6
 
   def start_link(_opts) do
@@ -613,9 +612,7 @@ defmodule Orchid.GoalWatcher do
         else: config
 
     if mode == :gvr do
-      config
-      |> Map.put(:provider, :openrouter)
-      |> Map.put(:model, :nex_n2_pro)
+      Map.merge(config, @planner_llm_config)
     else
       config
     end
@@ -717,11 +714,7 @@ defmodule Orchid.GoalWatcher do
       completed_tasks: Keyword.get(opts, :completed_tasks, []),
       workspace_context:
         Keyword.get_lazy(opts, :workspace_context, fn -> planner_workspace_context(project.id) end),
-      llm_config:
-        Keyword.get(opts, :llm_config, %{
-          provider: :openrouter,
-          model: :nex_n2_pro
-        })
+      llm_config: Keyword.get(opts, :llm_config, @planner_llm_config)
     ]
     |> maybe_put_option(:allowed_tools, Keyword.get(opts, :allowed_tools))
     |> maybe_put_option(:llm_module, Keyword.get(opts, :llm_module))

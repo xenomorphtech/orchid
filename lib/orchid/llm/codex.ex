@@ -269,6 +269,7 @@ defmodule Orchid.LLM.Codex do
     |> put_present("skipGitRepoCheck", skip_git_repo_check?(config))
     |> put_present("approvalPolicy", approval_policy_for(config))
     |> put_present("sandboxMode", sandbox_mode_for(config))
+    |> put_present("bypassApprovalsAndSandbox", bypass_approvals_and_sandbox?(config))
     |> put_present("configOverrides", config_overrides_for(config))
   end
 
@@ -313,6 +314,8 @@ defmodule Orchid.LLM.Codex do
   defp sandbox_mode_for(config) do
     if run_in_container?(config), do: "danger-full-access", else: "workspace-write"
   end
+
+  defp bypass_approvals_and_sandbox?(config), do: run_in_container?(config)
 
   defp config_overrides_for(config) do
     if config[:use_orchid_tools] do
@@ -494,11 +497,13 @@ defmodule Orchid.LLM.Codex do
     real_home = System.get_env("CODEX_HOME") || Path.expand("~/.codex")
 
     if File.dir?(real_home) do
-      real_home
-      |> File.ls!()
-      |> Enum.each(fn entry ->
-        File.cp_r!(Path.join(real_home, entry), Path.join(home, entry))
-      end)
+      for entry <- ~w(auth.json installation_id version.json) do
+        source = Path.join(real_home, entry)
+
+        if File.regular?(source) do
+          File.cp!(source, Path.join(home, entry))
+        end
+      end
     end
   end
 
