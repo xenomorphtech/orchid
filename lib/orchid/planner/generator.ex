@@ -138,9 +138,13 @@ defmodule Orchid.Planner.Generator do
       """
       REVISION FEEDBACK:
       #{attempt_line}
-      The previous candidate plan was not accepted. Produce a revised JSON array
-      that directly fixes every issue below. Do not repeat rejected structure,
-      invalid task types, prose-only answers, or markdown.
+      The previous candidate plan was not accepted. Treat verifier critiques as
+      mandatory rewrite instructions, not advice. Produce a revised JSON array
+      that directly fixes every issue below. When a critique asks to split,
+      sequence, add evidence, or make a dependency explicit, change the task
+      array accordingly with separate ordered tasks or concrete task objectives.
+      Do not repeat rejected structure, invalid task types, prose-only answers,
+      or markdown.
 
       #{Enum.map_join(feedback, "\n\n", &format_revision_feedback/1)}
       """
@@ -172,7 +176,7 @@ defmodule Orchid.Planner.Generator do
          rejected_plan_json: rejected_plan_json
        }) do
     """
-    Attempt #{attempt} verifier critique:
+    Attempt #{attempt} verifier critique (mandatory revision instructions):
     #{limit_text(critique, 1_500)}
 
     Rejected task array:

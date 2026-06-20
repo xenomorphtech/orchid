@@ -4,7 +4,10 @@ defmodule Orchid.Planner do
 
   This module explores several structured candidate task arrays concurrently,
   verifies each one, revises rejected plans within the iteration budget, and
-  returns the strongest approved plan.
+  returns the strongest approved plan. If every path exhausts the revision
+  budget without approval or the verifier cannot produce a parseable verdict,
+  the planner returns the retained candidate as a best-effort, unapproved plan
+  so downstream execution can still measure plan quality.
   """
 
   require Logger
@@ -62,11 +65,30 @@ defmodule Orchid.Planner do
         _ -> []
       end)
 
-    case approved do
-      [] ->
+    best_effort =
+      Enum.flat_map(results, fn
+        {:flawed, tasks, critique} when is_list(tasks) and tasks != [] ->
+          [{:flawed, tasks, critique}]
+
+        {:unverified, tasks, reason} when is_list(tasks) and tasks != [] ->
+          [{:unverified, tasks, reason}]
+
+        _ ->
+          []
+      end)
+
+    case {approved, best_effort} do
+      {[], [{status, tasks, reason} | _rest]} ->
+        Logger.info(
+          "[GVR] verifier: executing best-effort #{best_effort_label(status)} plan with no approved path: #{truncate(reason, 240)}"
+        )
+
+        {:ok, tasks}
+
+      {[], []} ->
         {:error, rejected_summary(results)}
 
-      [{tasks, reason} | _rest] ->
+      {[{tasks, reason} | _rest], _} ->
         Logger.info("[GVR] verifier: approved structured plan: #{truncate(reason, 240)}")
         {:ok, tasks}
     end
@@ -225,7 +247,12 @@ defmodule Orchid.Planner do
           )
         else
           next_feedback = feedback ++ [verifier_retry_feedback(attempt, reason)]
-          {:error, retry_summary(next_feedback)}
+
+          Logger.info(
+            "[GVR] verifier path #{path_index}/#{path_count} attempt #{attempt}/#{max_iterations}: parse retries exhausted; retaining unverified candidate for best-effort execution"
+          )
+
+          {:unverified, tasks, retry_summary(next_feedback)}
         end
     end
   end
@@ -286,19 +313,34 @@ defmodule Orchid.Planner do
   end
 
   defp normalize_path_result({:ok, {:approved, tasks, reason}}), do: {:approved, tasks, reason}
-  defp normalize_path_result({:ok, {:flawed, _tasks, critique}}), do: {:flawed, critique}
+  defp normalize_path_result({:ok, {:flawed, tasks, critique}}), do: {:flawed, tasks, critique}
+
+  defp normalize_path_result({:ok, {:unverified, tasks, reason}}),
+    do: {:unverified, tasks, reason}
+
   defp normalize_path_result({:ok, {:error, reason}}), do: {:error, reason}
   defp normalize_path_result({:exit, reason}), do: {:error, inspect(reason)}
   defp normalize_path_result(other), do: {:error, inspect(other)}
+
+  defp best_effort_label(:flawed), do: "flawed/unapproved"
+  defp best_effort_label(:unverified), do: "unverified/unapproved"
 
   defp rejected_summary(results) do
     details =
       results
       |> Enum.with_index(1)
       |> Enum.map_join("; ", fn
-        {{:flawed, critique}, index} -> "path #{index} flawed: #{truncate(critique, 180)}"
-        {{:error, reason}, index} -> "path #{index} error: #{truncate(reason, 180)}"
-        {other, index} -> "path #{index}: #{truncate(inspect(other), 180)}"
+        {{:flawed, _tasks, critique}, index} ->
+          "path #{index} flawed (best-effort candidate retained): #{truncate(critique, 180)}"
+
+        {{:unverified, _tasks, reason}, index} ->
+          "path #{index} unverified (best-effort candidate retained): #{truncate(reason, 180)}"
+
+        {{:error, reason}, index} ->
+          "path #{index} error: #{truncate(reason, 180)}"
+
+        {other, index} ->
+          "path #{index}: #{truncate(inspect(other), 180)}"
       end)
 
     if details == "" do
