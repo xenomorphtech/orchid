@@ -32,10 +32,10 @@ defmodule Orchid.Tools.Shell do
 
     task =
       Task.async(fn ->
-        System.cmd("sh", ["-c", command], stderr_to_stdout: true)
+        Orchid.OS.Command.run("sh", ["-c", command], stderr_to_stdout: true)
       end)
 
-    case Task.yield(task, timeout) || Task.shutdown(task) do
+    case Task.yield(task, timeout) do
       {:ok, {output, 0}} ->
         {:ok, output}
 
@@ -43,6 +43,7 @@ defmodule Orchid.Tools.Shell do
         {:error, "Exit code #{exit_code}:\n#{output}"}
 
       nil ->
+        Task.shutdown(task, :brutal_kill)
         {:error, "Command timed out after #{timeout}ms"}
     end
   rescue

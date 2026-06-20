@@ -108,12 +108,17 @@ defmodule Orchid.GoalWatcher do
 
     if orphaned != [] do
       log(
-        "project \"#{project.name}\": #{length(orphaned)} goal(s) assigned to dead agents — clearing assignments"
+        "project \"#{project.name}\": #{length(orphaned)} goal(s) assigned to dead agents — clearing assignments",
+        project_id: project.id
       )
 
       for goal <- orphaned do
         Orchid.Object.update_metadata(goal.id, %{agent_id: nil})
-        log("  cleared dead agent from goal \"#{goal.name}\" [#{goal.id}]")
+
+        log("  cleared dead agent from goal \"#{goal.name}\" [#{goal.id}]",
+          project_id: project.id,
+          metadata: %{goal_id: goal.id}
+        )
       end
     end
 
@@ -136,7 +141,8 @@ defmodule Orchid.GoalWatcher do
         end
 
       log(
-        "project \"#{project.name}\" has #{length(pending)} pending goal(s), 0 agents — spawning planner"
+        "project \"#{project.name}\" has #{length(pending)} pending goal(s), 0 agents — spawning planner",
+        project_id: project.id
       )
 
       spawn_planner(project, pending)
@@ -176,23 +182,34 @@ defmodule Orchid.GoalWatcher do
 
             if last_role in [:user, :tool] do
               log(
-                "agent #{agent_state.id} (#{tag}) idle, last msg=#{last_role}, goals: #{goal_names} — retrying"
+                "agent #{agent_state.id} (#{tag}) idle, last msg=#{last_role}, goals: #{goal_names} — retrying",
+                project_id: project.id,
+                agent_id: agent_state.id
               )
 
               Task.start(fn ->
                 case Orchid.Agent.retry(agent_state.id) do
                   {:ok, response} ->
                     preview = response |> String.slice(0, 200) |> String.replace("\n", " ")
-                    log("agent #{agent_state.id} (#{tag}) retry responded: #{preview}")
+
+                    log("agent #{agent_state.id} (#{tag}) retry responded: #{preview}",
+                      project_id: project.id,
+                      agent_id: agent_state.id
+                    )
 
                   {:error, reason} ->
                     log(
-                      "ERROR: agent #{agent_state.id} (#{tag}) retry failed: #{inspect(reason)}"
+                      "ERROR: agent #{agent_state.id} (#{tag}) retry failed: #{inspect(reason)}",
+                      project_id: project.id,
+                      agent_id: agent_state.id
                     )
                 end
               end)
             else
-              log("agent #{agent_state.id} (#{tag}) idle, goals: #{goal_names} — re-kicking")
+              log("agent #{agent_state.id} (#{tag}) idle, goals: #{goal_names} — re-kicking",
+                project_id: project.id,
+                agent_id: agent_state.id
+              )
 
               Task.start(fn ->
                 message = build_rekick_message(agent_state, re_kickable_goals)
@@ -200,11 +217,17 @@ defmodule Orchid.GoalWatcher do
                 case Orchid.Agent.stream(agent_state.id, message, fn _chunk -> :ok end) do
                   {:ok, response} ->
                     preview = response |> String.slice(0, 200) |> String.replace("\n", " ")
-                    log("agent #{agent_state.id} (#{tag}) re-kick responded: #{preview}")
+
+                    log("agent #{agent_state.id} (#{tag}) re-kick responded: #{preview}",
+                      project_id: project.id,
+                      agent_id: agent_state.id
+                    )
 
                   {:error, reason} ->
                     log(
-                      "ERROR: agent #{agent_state.id} (#{tag}) re-kick failed: #{inspect(reason)}"
+                      "ERROR: agent #{agent_state.id} (#{tag}) re-kick failed: #{inspect(reason)}",
+                      project_id: project.id,
+                      agent_id: agent_state.id
                     )
                 end
               end)
@@ -274,7 +297,9 @@ defmodule Orchid.GoalWatcher do
   defp spawn_flat_planner(project, pending_goals, request) do
     case find_planner_template() do
       nil ->
-        log("ERROR: no Planner template found, skipping project \"#{project.name}\"")
+        log("ERROR: no Planner template found, skipping project \"#{project.name}\"",
+          project_id: project.id
+        )
 
       planner ->
         ensure_planner_sandbox(project)
@@ -284,16 +309,24 @@ defmodule Orchid.GoalWatcher do
           case run_flat_planner_message(config, request.planner_objective,
                  label: "kickoff",
                  on_agent_created: fn agent_id ->
-                   log("spawned flat planner #{agent_id} for project \"#{project.name}\"")
+                   log("spawned flat planner #{agent_id} for project \"#{project.name}\"",
+                     project_id: project.id,
+                     agent_id: agent_id
+                   )
+
                    assign_unassigned_goals(pending_goals, agent_id)
                  end
                ) do
             {:ok, %{agent_id: agent_id}} ->
-              log("sent kickoff message to #{agent_id}")
+              log("sent kickoff message to #{agent_id}",
+                project_id: project.id,
+                agent_id: agent_id
+              )
 
             {:error, reason} ->
               log(
-                "ERROR: flat planner for \"#{project.name}\" failed to produce output: #{inspect(reason)}"
+                "ERROR: flat planner for \"#{project.name}\" failed to produce output: #{inspect(reason)}",
+                project_id: project.id
               )
           end
         end)
@@ -420,18 +453,27 @@ defmodule Orchid.GoalWatcher do
   defp spawn_gvr_planner(project, pending_goals, request, decision) do
     case find_planner_template() do
       nil ->
-        log("ERROR: no Planner template found, skipping project \"#{project.name}\"")
+        log("ERROR: no Planner template found, skipping project \"#{project.name}\"",
+          project_id: project.id
+        )
 
       planner ->
         ensure_planner_sandbox(project)
 
         case Orchid.Agent.create(planner_agent_config(planner, project, :gvr)) do
           {:ok, agent_id} ->
-            log("spawned G-V-R planner #{agent_id} for project \"#{project.name}\"")
+            log("spawned G-V-R planner #{agent_id} for project \"#{project.name}\"",
+              project_id: project.id,
+              agent_id: agent_id
+            )
+
             assign_unassigned_goals(pending_goals, agent_id)
 
             Task.start(fn ->
-              log("running G-V-R planner for #{agent_id}...")
+              log("running G-V-R planner for #{agent_id}...",
+                project_id: project.id,
+                agent_id: agent_id
+              )
 
               opts = [
                 base_sandbox: Orchid.Sandbox.status(project.id),
@@ -451,11 +493,15 @@ defmodule Orchid.GoalWatcher do
               end
             end)
 
-            log("started G-V-R planner task for #{agent_id}")
+            log("started G-V-R planner task for #{agent_id}",
+              project_id: project.id,
+              agent_id: agent_id
+            )
 
           {:error, reason} ->
             log(
-              "ERROR: failed to spawn G-V-R planner for \"#{project.name}\": #{inspect(reason)}"
+              "ERROR: failed to spawn G-V-R planner for \"#{project.name}\": #{inspect(reason)}",
+              project_id: project.id
             )
         end
     end
@@ -774,12 +820,19 @@ defmodule Orchid.GoalWatcher do
     tname || "#{provider}#{if model, do: "/#{model}", else: ""}"
   end
 
-  defp log(msg) do
+  defp log(msg, opts \\ []) do
     File.mkdir_p!(Path.dirname(@log_file))
     ts = DateTime.utc_now() |> DateTime.to_string()
     line = "[#{ts}] GoalWatcher: #{msg}\n"
     File.write!(@log_file, line, [:append])
-    Logger.info("GoalWatcher: #{msg}")
+    rendered = "GoalWatcher: #{msg}"
+    Logger.info(rendered)
+
+    Orchid.EventLog.info(:goal_watcher, rendered,
+      project_id: Keyword.get(opts, :project_id),
+      agent_id: Keyword.get(opts, :agent_id),
+      metadata: Keyword.get(opts, :metadata, %{})
+    )
   end
 
   defp build_rekick_message(agent_state, assigned_pending) do

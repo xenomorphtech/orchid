@@ -8,7 +8,7 @@ defmodule Orchid.LLM do
   - :anthropic - Direct API calls (pay per token, needs ANTHROPIC_API_KEY)
   """
 
-  alias Orchid.LLM.{Anthropic, OAuth, CLI, Codex, Gemini, Cerebras, OpenRouter, Catalog}
+  alias Orchid.LLM.{Anthropic, OAuth, CLI, Codex, CodexHttp, Gemini, Cerebras, OpenRouter, Catalog}
 
   @doc """
   Send a chat request to the configured LLM provider.
@@ -18,6 +18,7 @@ defmodule Orchid.LLM do
     case resolve_provider(config) do
       :cli -> CLI.chat(config, context)
       :codex -> Codex.chat(config, context)
+      :codex_http -> CodexHttp.chat(config, context)
       :oauth -> OAuth.chat(config, context)
       :anthropic -> Anthropic.chat(config, context)
       :gemini -> Gemini.chat(config, context)
@@ -35,6 +36,7 @@ defmodule Orchid.LLM do
     case resolve_provider(config) do
       :cli -> CLI.chat_stream(config, context, callback)
       :codex -> Codex.chat_stream(config, context, callback)
+      :codex_http -> CodexHttp.chat_stream(config, context, callback)
       :oauth -> OAuth.chat_stream(config, context, callback)
       :anthropic -> Anthropic.chat_stream(config, context, callback)
       :gemini -> Gemini.chat_stream(config, context, callback)

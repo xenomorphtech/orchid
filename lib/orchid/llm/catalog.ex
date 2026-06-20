@@ -4,6 +4,7 @@ defmodule Orchid.LLM.Catalog do
   @providers [
     %{id: :cli, label: "CLI", contexts: [:template]},
     %{id: :codex, label: "Codex", contexts: [:template]},
+    %{id: :codex_http, label: "Codex HTTP", contexts: [:template]},
     %{id: :oauth, label: "API", contexts: [:template]},
     %{id: :gemini, label: "Gemini", contexts: [:template]},
     %{id: :cerebras, label: "Cerebras", contexts: [:template]},
@@ -35,13 +36,13 @@ defmodule Orchid.LLM.Catalog do
     %{
       id: :gpt54,
       label: "GPT 5.4",
-      providers: %{codex: "gpt-5.4"},
+      providers: %{codex: "gpt-5.4", codex_http: "gpt-5.4"},
       contexts: [:template, :decomp]
     },
     %{
       id: :gpt53,
       label: "GPT 5.3",
-      providers: %{codex: "gpt-5.3-codex"},
+      providers: %{codex: "gpt-5.3-codex", codex_http: "gpt-5.3-codex"},
       contexts: [:template, :decomp]
     },
     %{
@@ -180,13 +181,21 @@ defmodule Orchid.LLM.Catalog do
 
   def provider_for_model(model) do
     case model(model) do
-      %{providers: providers} when map_size(providers) == 1 ->
+      %{providers: providers} ->
         providers
         |> Map.keys()
-        |> hd()
+        |> infer_provider()
 
       _ ->
         nil
+    end
+  end
+
+  defp infer_provider([provider]), do: provider
+
+  defp infer_provider(providers) do
+    if :codex in providers and Enum.all?(providers, &(&1 in [:codex, :codex_http])) do
+      :codex
     end
   end
 

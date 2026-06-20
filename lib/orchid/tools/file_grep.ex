@@ -37,7 +37,7 @@ defmodule Orchid.Tools.FileGrep do
     cmd_args = ["-n", "--no-heading", pattern, path]
     cmd_args = if glob = args["glob"], do: cmd_args ++ ["--glob", glob], else: cmd_args
 
-    case System.cmd("rg", cmd_args, stderr_to_stdout: true) do
+    case Orchid.OS.Command.run("rg", cmd_args, stderr_to_stdout: true) do
       {output, 0} -> {:ok, output}
       {_output, 1} -> {:ok, "No matches found"}
       {output, _} -> {:error, "grep failed: #{output}"}
