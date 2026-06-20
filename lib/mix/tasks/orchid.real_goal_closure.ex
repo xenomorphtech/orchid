@@ -241,55 +241,11 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
          max_retries,
          route_mode \\ :auto
        ) do
-    attempts =
-      do_run_goal_with_reliability_retries(
-        definition,
-        goal_timeout_ms,
-        success_timeout_ms,
-        repo_cwd,
-        route_mode,
-        max_retries,
-        []
-      )
-
-    attempts
-    |> List.last()
-    |> annotate_goal_attempts(attempts, max_retries)
-  end
-
-  defp do_run_goal_with_reliability_retries(
-         definition,
-         goal_timeout_ms,
-         success_timeout_ms,
-         repo_cwd,
-         route_mode,
-         retries_remaining,
-         attempts
-       ) do
-    result = run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd, route_mode)
-    attempts = attempts ++ [result]
-
-    cond do
-      result.closed ->
-        attempts
-
-      not result.reliability_failure ->
-        attempts
-
-      retries_remaining <= 0 ->
-        attempts
-
-      true ->
-        do_run_goal_with_reliability_retries(
-          definition,
-          goal_timeout_ms,
-          success_timeout_ms,
-          repo_cwd,
-          route_mode,
-          retries_remaining - 1,
-          attempts
-        )
-    end
+    __MODULE__.ReliabilityRetry.run(
+      fn -> run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd, route_mode) end,
+      max_retries,
+      &arm_summary/1
+    )
   end
 
   defp run_gvr_with_retries(
@@ -303,45 +259,18 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     result = run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd, :gvr)
     attempts = attempts ++ [result]
 
-    cond do
-      result.closed ->
+    if __MODULE__.ReliabilityRetry.should_retry?(result, retries_remaining) do
+      run_gvr_with_retries(
+        definition,
+        goal_timeout_ms,
+        success_timeout_ms,
+        repo_cwd,
+        retries_remaining - 1,
         attempts
-
-      not result.reliability_failure ->
-        attempts
-
-      retries_remaining <= 0 ->
-        attempts
-
-      true ->
-        run_gvr_with_retries(
-          definition,
-          goal_timeout_ms,
-          success_timeout_ms,
-          repo_cwd,
-          retries_remaining - 1,
-          attempts
-        )
-    end
-  end
-
-  defp annotate_goal_attempts(result, attempts, max_retries) do
-    attempts_used = length(attempts)
-
-    result
-    |> Map.put(:attempts_used, attempts_used)
-    |> Map.put(:reliability_retry_limit, max_retries)
-    |> Map.put(:retried, attempts_used > 1)
-    |> Map.put(
-      :attempts,
+      )
+    else
       attempts
-      |> Enum.with_index(1)
-      |> Enum.map(fn {attempt, index} ->
-        attempt
-        |> arm_summary()
-        |> Map.put(:attempt, index)
-      end)
-    )
+    end
   end
 
   defp run_goal(definition, goal_timeout_ms, success_timeout_ms, repo_cwd, route_mode) do
@@ -1289,35 +1218,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     end
   end
 
-  defp reliability_failure?(nil), do: false
-
-  defp reliability_failure?(text) when is_binary(text) do
-    down = String.downcase(text)
-
-    Enum.any?(
-      [
-        "429",
-        "rate limit",
-        "quota",
-        "empty output",
-        "empty response",
-        "no decodable output",
-        "api_key_missing",
-        "database or disk is full",
-        "no space left",
-        "enospc",
-        "container save",
-        "exit code 125",
-        "no container with name",
-        "no such container",
-        "timed out starting orchid mcp bridge",
-        "openrouter api error"
-      ],
-      &String.contains?(down, &1)
-    )
-  end
-
-  defp reliability_failure?(other), do: other |> inspect() |> reliability_failure?()
+  defp reliability_failure?(value), do: __MODULE__.ReliabilityRetry.reliability_failure?(value)
 
   defp write_report!(report, output_path) do
     output_path
@@ -1421,6 +1322,97 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
   end
 
   defp truncate(text, _max), do: text
+
+  defmodule ReliabilityRetry do
+    @moduledoc false
+
+    def run(next_attempt, max_retries, summarize_attempt \\ & &1)
+        when is_function(next_attempt, 0) and is_integer(max_retries) and max_retries >= 0 and
+               is_function(summarize_attempt, 1) do
+      attempts = collect_attempts(next_attempt, max_retries, [])
+
+      attempts
+      |> List.last()
+      |> annotate_attempts(attempts, max_retries, summarize_attempt)
+    end
+
+    def should_retry?(result, retries_remaining) do
+      cond do
+        result.closed ->
+          false
+
+        not result.reliability_failure ->
+          false
+
+        retries_remaining <= 0 ->
+          false
+
+        true ->
+          true
+      end
+    end
+
+    def annotate_attempts(result, attempts, max_retries, summarize_attempt \\ & &1)
+        when is_function(summarize_attempt, 1) do
+      attempts_used = length(attempts)
+
+      result
+      |> Map.put(:attempts_used, attempts_used)
+      |> Map.put(:reliability_retry_limit, max_retries)
+      |> Map.put(:retried, attempts_used > 1)
+      |> Map.put(
+        :attempts,
+        attempts
+        |> Enum.with_index(1)
+        |> Enum.map(fn {attempt, index} ->
+          attempt
+          |> summarize_attempt.()
+          |> Map.put(:attempt, index)
+        end)
+      )
+    end
+
+    def reliability_failure?(nil), do: false
+
+    def reliability_failure?(text) when is_binary(text) do
+      down = String.downcase(text)
+
+      Enum.any?(
+        [
+          "429",
+          "rate limit",
+          "quota",
+          "empty output",
+          "empty response",
+          "no decodable output",
+          "api_key_missing",
+          "database or disk is full",
+          "no space left",
+          "enospc",
+          "container save",
+          "exit code 125",
+          "no container with name",
+          "no such container",
+          "timed out starting orchid mcp bridge",
+          "openrouter api error"
+        ],
+        &String.contains?(down, &1)
+      )
+    end
+
+    def reliability_failure?(other), do: other |> inspect() |> reliability_failure?()
+
+    defp collect_attempts(next_attempt, retries_remaining, attempts) do
+      result = next_attempt.()
+      attempts = attempts ++ [result]
+
+      if should_retry?(result, retries_remaining) do
+        collect_attempts(next_attempt, retries_remaining - 1, attempts)
+      else
+        attempts
+      end
+    end
+  end
 
   defmodule ModelCallCounter do
     @moduledoc false
