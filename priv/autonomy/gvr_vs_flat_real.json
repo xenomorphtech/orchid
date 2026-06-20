@@ -1,0 +1,14 @@
+{
+  "goal_id": "delta_dependency_order_refactor",
+  "flat": {
+    "closed": true,
+    "nudges": 0,
+    "failure_mode": null
+  },
+  "gvr": {
+    "closed": false,
+    "nudges": 0,
+    "failure_mode": "free_model_convergence_variance"
+  },
+  "gvr_beats_flat": false
+}
