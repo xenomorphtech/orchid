@@ -775,6 +775,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     Map.new(value, fn {key, val} -> {json_key(key), json_safe(val)} end)
   end
 
+  defp json_safe(value) when is_boolean(value) or is_nil(value), do: value
   defp json_safe(value) when is_list(value), do: Enum.map(value, &json_safe/1)
   defp json_safe(value) when is_tuple(value), do: inspect(value)
   defp json_safe(value) when is_atom(value), do: Atom.to_string(value)
