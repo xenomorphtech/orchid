@@ -176,9 +176,12 @@ defmodule Orchid.Agent do
   Stop an agent.
   """
   def stop(agent_id, reason \\ :manual_stop) do
-    case call(agent_id, {:stop_agent, reason}, 5_000) do
+    sandbox_container = sandbox_container_for_agent(agent_id)
+
+    case call(agent_id, {:stop_agent, reason}, 30_000) do
       :ok ->
         wait_until_stopped(agent_id, 50)
+        wait_until_container_removed(sandbox_container, 200)
         :ok
 
       other ->
@@ -240,21 +243,6 @@ defmodule Orchid.Agent do
       execution_mode: execution_mode
     }
 
-    state =
-      if state.project_id && state.execution_mode == :vm do
-        case Orchid.Projects.ensure_sandbox(state.project_id) do
-          {:ok, _} ->
-            sandbox_status = Orchid.Sandbox.status(state.project_id)
-            %{state | sandbox: sandbox_status}
-
-          {:error, reason} ->
-            Logger.warning("Agent #{id}: sandbox failed to start: #{inspect(reason)}")
-            state
-        end
-      else
-        state
-      end
-
     start_message =
       "Agent #{id} started, project=#{inspect(state.project_id)}, mode=#{state.execution_mode}, provider=#{config[:provider]}, model=#{config[:model]}"
 
@@ -273,7 +261,30 @@ defmodule Orchid.Agent do
     put_runtime(id, %{lifecycle: :running, worker_pid: nil})
     publish_state(state)
     Store.put_agent_state(id, state)
-    {:ok, state}
+
+    if state.project_id && state.execution_mode == :vm do
+      {:ok, state, {:continue, :ensure_sandbox}}
+    else
+      {:ok, state}
+    end
+  end
+
+  @impl true
+  def handle_continue(:ensure_sandbox, state) do
+    state =
+      case Orchid.Projects.ensure_sandbox(state.project_id) do
+        {:ok, _} ->
+          sandbox_status = Orchid.Sandbox.status(state.project_id)
+          %{state | sandbox: sandbox_status}
+
+        {:error, reason} ->
+          Logger.warning("Agent #{state.id}: sandbox failed to start: #{inspect(reason)}")
+          state
+      end
+
+    publish_state(state)
+    Store.put_agent_state(state.id, state)
+    {:noreply, state}
   end
 
   @impl true
@@ -337,6 +348,7 @@ defmodule Orchid.Agent do
     stopping_state = %{state | lifecycle: :stopping}
     put_runtime(state.id, %{lifecycle: :stopping})
     stop_worker(state.id)
+    stop_sandbox(state)
     stop_reason = if reason == :manual_stop, do: {:shutdown, :manual_stop}, else: reason
     {:stop, stop_reason, :ok, stopping_state}
   end
@@ -593,12 +605,19 @@ defmodule Orchid.Agent do
   @impl true
   def terminate(reason, state) do
     stop_worker(state.id)
+    stop_sandbox(state)
     put_runtime(state.id, %{lifecycle: :stopped, worker_pid: nil})
     maybe_notify_creator_on_terminate(reason, state)
     :ets.delete(:orchid_agent_states, state.id)
     Store.delete_agent_state(state.id)
     :ok
   end
+
+  defp stop_sandbox(%{project_id: project_id, execution_mode: :vm}) when is_binary(project_id) do
+    Orchid.Sandbox.stop(project_id)
+  end
+
+  defp stop_sandbox(_state), do: :ok
 
   # Build a short tag for log lines: "provider/model, goal: name"
   defp agent_log_tag(state) do
@@ -1196,6 +1215,43 @@ defmodule Orchid.Agent do
         Process.sleep(20)
         wait_until_stopped(agent_id, attempts_left - 1)
     end
+  end
+
+  defp sandbox_container_for_agent(agent_id) do
+    case get_state(agent_id) do
+      {:ok, %{project_id: project_id, execution_mode: :vm}} when is_binary(project_id) ->
+        Orchid.Sandbox.container_name(project_id)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp wait_until_container_removed(nil, _attempts_left), do: :ok
+
+  defp wait_until_container_removed(_container_name, attempts_left) when attempts_left <= 0,
+    do: :ok
+
+  defp wait_until_container_removed(container_name, attempts_left) do
+    if container_present?(container_name) do
+      Process.sleep(100)
+      wait_until_container_removed(container_name, attempts_left - 1)
+    else
+      :ok
+    end
+  end
+
+  defp container_present?(container_name) do
+    case Orchid.OS.Command.run(
+           "podman",
+           ["ps", "-a", "--filter", "name=#{container_name}", "--format", "{{.Names}}"],
+           stderr_to_stdout: true
+         ) do
+      {output, 0} -> String.contains?(output, container_name)
+      _ -> false
+    end
+  rescue
+    _ -> false
   end
 
   defp await_agent_done(_agent_id, timeout_ms) when timeout_ms <= 0, do: {:error, :timeout}

@@ -11,6 +11,7 @@ defmodule Orchid.Sandbox do
   alias Orchid.{Project, Sandbox.Overlay}
 
   defstruct [
+    :sandbox_id,
     :project_id,
     :container_name,
     :lower_path,
@@ -24,12 +25,19 @@ defmodule Orchid.Sandbox do
 
   # ── Deterministic path helpers (no GenServer needed) ──
 
+  def container_name({sandbox_id, _project_id}), do: container_name(sandbox_id)
+
+  def container_name("agent-" <> _ = sandbox_id), do: "orchid-#{sandbox_id}"
   def container_name(project_id), do: "orchid-project-#{project_id}"
 
-  defp paths(project_id) do
+  defp paths(sandbox_id) do
+    paths(sandbox_id, registry_project_id(sandbox_id))
+  end
+
+  defp paths(sandbox_id, project_id) do
     data_dir = Project.data_dir() |> Path.expand()
     lower = Project.files_path(project_id) |> Path.expand()
-    base = Path.join([data_dir, "sandboxes", project_id])
+    base = Path.join([data_dir, "sandboxes", sandbox_id])
 
     %{
       lower: lower,
@@ -39,25 +47,46 @@ defmodule Orchid.Sandbox do
     }
   end
 
-  defp overlay_method(project_id) do
-    case Registry.lookup(Orchid.Registry, {:sandbox, project_id}) do
+  defp overlay_method(sandbox_id) do
+    case Registry.lookup(Orchid.Registry, {:sandbox, sandbox_id}) do
+      [{_pid, %{overlay_method: method}}] -> method
       [{_pid, method}] -> method
       [] -> nil
     end
   end
 
+  defp registry_project_id(sandbox_id) do
+    case Registry.lookup(Orchid.Registry, {:sandbox, sandbox_id}) do
+      [{_pid, %{project_id: project_id}}] when is_binary(project_id) -> project_id
+      _ -> sandbox_id
+    end
+  end
+
+  defp registry_project_id(%{project_id: project_id}, _fallback) when is_binary(project_id) do
+    project_id
+  end
+
+  defp registry_project_id(_value, fallback), do: fallback
+
+  defp registry_overlay_method(%{overlay_method: method}), do: method
+  defp registry_overlay_method(method), do: method
+
   # ── Client API: Lifecycle (goes through GenServer) ──
 
-  def start_link(project_id) do
-    GenServer.start_link(__MODULE__, project_id,
-      name: {:via, Registry, {Orchid.Registry, {:sandbox, project_id}}}
+  def start_link(sandbox_ref) do
+    %{sandbox_id: sandbox_id} = normalize_sandbox_ref(sandbox_ref)
+
+    GenServer.start_link(__MODULE__, sandbox_ref,
+      name: {:via, Registry, {Orchid.Registry, {:sandbox, sandbox_id}}}
     )
   end
 
-  def child_spec(project_id) do
+  def child_spec(sandbox_ref) do
+    %{sandbox_id: sandbox_id} = normalize_sandbox_ref(sandbox_ref)
+
     %{
-      id: {__MODULE__, project_id},
-      start: {__MODULE__, :start_link, [project_id]},
+      id: {__MODULE__, sandbox_id},
+      start: {__MODULE__, :start_link, [sandbox_ref]},
       restart: :temporary
     }
   end
@@ -91,7 +120,8 @@ defmodule Orchid.Sandbox do
 
   def status(project_id) do
     case Registry.lookup(Orchid.Registry, {:sandbox, project_id}) do
-      [{_pid, method}] ->
+      [{_pid, value}] ->
+        method = registry_overlay_method(value)
         running = container_running?(container_name(project_id))
 
         %{
@@ -103,6 +133,7 @@ defmodule Orchid.Sandbox do
             end,
           container_name: container_name(project_id),
           overlay_method: method,
+          project_id: registry_project_id(value, project_id),
           running: running
         }
 
@@ -113,8 +144,11 @@ defmodule Orchid.Sandbox do
 
   def healthy?(project_id) do
     case Registry.lookup(Orchid.Registry, {:sandbox, project_id}) do
-      [{_pid, method}] when not is_nil(method) ->
-        container_running?(container_name(project_id))
+      [{_pid, value}] ->
+        case registry_overlay_method(value) do
+          nil -> false
+          _method -> container_running?(container_name(project_id))
+        end
 
       _ ->
         false
@@ -247,8 +281,9 @@ defmodule Orchid.Sandbox do
   # ── GenServer callbacks ──
 
   @impl true
-  def init(project_id) do
-    p = paths(project_id)
+  def init(sandbox_ref) do
+    %{sandbox_id: sandbox_id, project_id: project_id} = normalize_sandbox_ref(sandbox_ref)
+    p = paths(sandbox_id, project_id)
 
     File.mkdir_p!(p.upper)
     File.mkdir_p!(p.work)
@@ -256,9 +291,10 @@ defmodule Orchid.Sandbox do
     Project.ensure_dir(project_id)
 
     image = get_image()
-    cname = container_name(project_id)
+    cname = container_name(sandbox_id)
 
     state = %__MODULE__{
+      sandbox_id: sandbox_id,
       project_id: project_id,
       container_name: cname,
       lower_path: p.lower,
@@ -272,8 +308,8 @@ defmodule Orchid.Sandbox do
 
     state = start_container(state)
     # Store overlay_method in Registry value so data ops can read it without GenServer
-    Registry.update_value(Orchid.Registry, {:sandbox, project_id}, fn _ ->
-      state.overlay_method
+    Registry.update_value(Orchid.Registry, {:sandbox, sandbox_id}, fn _ ->
+      registry_value(state)
     end)
 
     {:ok, state}
@@ -284,8 +320,8 @@ defmodule Orchid.Sandbox do
     destroy_container(state)
     new_state = start_container(%{state | status: :starting, image: get_image()})
 
-    Registry.update_value(Orchid.Registry, {:sandbox, state.project_id}, fn _ ->
-      new_state.overlay_method
+    Registry.update_value(Orchid.Registry, {:sandbox, state.sandbox_id}, fn _ ->
+      registry_value(new_state)
     end)
 
     {:reply, {:ok, %{status: new_state.status}}, new_state}
@@ -301,6 +337,19 @@ defmodule Orchid.Sandbox do
 
   defp get_image do
     Orchid.Object.get_fact_value("sandbox_image") || "orchid-sandbox:latest"
+  end
+
+  defp normalize_sandbox_ref({sandbox_id, project_id})
+       when is_binary(sandbox_id) and is_binary(project_id) do
+    %{sandbox_id: sandbox_id, project_id: project_id}
+  end
+
+  defp normalize_sandbox_ref(project_id) when is_binary(project_id) do
+    %{sandbox_id: project_id, project_id: project_id}
+  end
+
+  defp registry_value(state) do
+    %{overlay_method: state.overlay_method, project_id: state.project_id}
   end
 
   defp claude_mounts do
@@ -479,7 +528,7 @@ defmodule Orchid.Sandbox do
   end
 
   defp try_overlay_container(state) do
-    Orchid.OS.Command.run("podman", ["rm", "-f", state.container_name], stderr_to_stdout: true)
+    remove_container(state.container_name)
 
     args =
       [
@@ -518,10 +567,7 @@ defmodule Orchid.Sandbox do
             {:ok, %{state | status: :ready, overlay_method: :overlay}}
 
           :exited ->
-            Orchid.OS.Command.run("podman", ["rm", "-f", state.container_name],
-              stderr_to_stdout: true
-            )
-
+            remove_container(state.container_name)
             {:error, "container exited (overlay mount likely failed)"}
         end
 
@@ -531,7 +577,7 @@ defmodule Orchid.Sandbox do
   end
 
   defp try_fallback_container(state) do
-    Orchid.OS.Command.run("podman", ["rm", "-f", state.container_name], stderr_to_stdout: true)
+    remove_container(state.container_name)
 
     args =
       [
@@ -554,6 +600,7 @@ defmodule Orchid.Sandbox do
           # Seed fallback workspace with lower-layer snapshot so workers can read project files.
           "mkdir -p /workspace && sudo chown -R agent:agent /workspace && " <>
             "if [ -d /workspace_lower ]; then cp -a /workspace_lower/. /workspace/ 2>/dev/null || true; fi && " <>
+            "sudo chmod -R a+rwX /workspace && " <>
             "if [ -d /usr/local/lib/node_modules/@openai/codex ]; then sudo ln -sf /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex; fi && " <>
             "if [ -d /tmp/.claude-host ]; then mkdir -p /home/agent/.claude && sudo cp /tmp/.claude-host/.credentials.json /tmp/.claude-host/settings.json /home/agent/.claude/ 2>/dev/null; sudo chown -R agent:agent /home/agent/.claude; fi && " <>
             "if [ -d /tmp/.codex-host ]; then mkdir -p /home/agent/.codex && sudo cp -r /tmp/.codex-host/* /home/agent/.codex/ 2>/dev/null; sudo chown -R agent:agent /home/agent/.codex; fi && " <>
@@ -567,10 +614,7 @@ defmodule Orchid.Sandbox do
             {:ok, %{state | status: :ready, overlay_method: :union}}
 
           :exited ->
-            Orchid.OS.Command.run("podman", ["rm", "-f", state.container_name],
-              stderr_to_stdout: true
-            )
-
+            remove_container(state.container_name)
             {:error, "container exited (fallback mode startup failed)"}
         end
 
@@ -595,7 +639,13 @@ defmodule Orchid.Sandbox do
   end
 
   defp destroy_container(state) do
-    Orchid.OS.Command.run("podman", ["rm", "-f", state.container_name], stderr_to_stdout: true)
+    remove_container(state.container_name)
+  end
+
+  defp remove_container(container_name) do
+    Orchid.OS.Command.run("podman", ["rm", "-f", "--time", "0", container_name],
+      stderr_to_stdout: true
+    )
   end
 
   # ── Private: Command execution (standalone, no GenServer) ──
