@@ -110,7 +110,7 @@ defmodule Mix.Tasks.Orchid.ClosureRegression do
     end
   end
 
-  defp build_report(flat_report, gvr_report, output_file, started_at, run_config) do
+  def build_report(flat_report, gvr_report, output_file, started_at, run_config) do
     flat = flat_summary(flat_report)
     gvr = gvr_summary(gvr_report)
     overall_pass = flat["pass"] and gvr["pass"]
@@ -133,7 +133,7 @@ defmodule Mix.Tasks.Orchid.ClosureRegression do
     }
   end
 
-  defp flat_summary(report) do
+  def flat_summary(report) do
     goals = report |> Map.get("goals", []) |> Enum.map(&goal_summary/1)
     total = integer_value(Map.get(report, "n_goals")) || length(goals)
     closed_count = integer_value(Map.get(report, "closed_count")) || count_closed(goals)
@@ -155,7 +155,7 @@ defmodule Mix.Tasks.Orchid.ClosureRegression do
     }
   end
 
-  defp gvr_summary(report) do
+  def gvr_summary(report) do
     goals = report |> Map.get("goals", []) |> Enum.map(&goal_summary/1)
     total = integer_value(Map.get(report, "n_goals")) || length(goals)
 
