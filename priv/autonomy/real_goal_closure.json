@@ -1,13 +1,14 @@
 {
   "closed_count": 3,
   "criteria": {
-    "all_success_checks_external": "true",
-    "at_least_1_closed_with_zero_nudges": "true",
-    "ran_all_3": "true"
+    "all_success_checks_external": true,
+    "at_least_1_closed_with_zero_nudges": true,
+    "ran_all_3": true
   },
   "data_dir": "/tmp/orchid-real-goal-closure-2504",
   "duration_ms": 510891,
   "generated_at": "2026-06-20T07:38:00.194819Z",
+  "report_path": "priv/autonomy/real_goal_closure.json",
   "goals": [
     {
       "active_agents": [
@@ -31,10 +32,10 @@
         }
       ],
       "blocker": "External success check passed before parent goal status completed.",
-      "closed": "true",
-      "closed_by_status": "false",
+      "closed": true,
+      "closed_by_status": false,
       "duration_ms": 175961,
-      "failure_mode": "nil",
+      "failure_mode": null,
       "goal_id": "2liDpZ9EG4R-cRSi",
       "goals": [
         {
@@ -64,18 +65,18 @@
       "model_calls": 9,
       "nudges": 0,
       "project_id": "8REpuwDO7L24w8jr",
-      "reliability_failure": "false",
+      "reliability_failure": false,
       "route": {
         "goal_label": "2liDpZ9EG4R-cRSi",
         "mode": "flat",
-        "route_input_matches_runtime_goal": "true",
+        "route_input_matches_runtime_goal": true,
         "signal": "objective_markers=none; objective_words=107; max_steps=8; success_check=shell"
       },
       "status": "success_fact_reached",
       "success_check": {
         "command": "cd /workspace && test -f notes/closure.txt && grep -qx 'orchid-real-goal-alpha' notes/closure.txt",
         "output": "",
-        "passed": "true"
+        "passed": true
       },
       "watcher_checks": 1,
       "workspace": "/tmp/orchid-real-goal-closure-2504/projects/8REpuwDO7L24w8jr/files"
@@ -93,10 +94,10 @@
         }
       ],
       "blocker": "nil",
-      "closed": "true",
-      "closed_by_status": "true",
+      "closed": true,
+      "closed_by_status": true,
       "duration_ms": 126090,
-      "failure_mode": "nil",
+      "failure_mode": null,
       "goal_id": "nulyXWT-evzi0JA8",
       "goals": [
         {
@@ -126,18 +127,18 @@
       "model_calls": 11,
       "nudges": 0,
       "project_id": "t7kr4lg4uxWHaEke",
-      "reliability_failure": "false",
+      "reliability_failure": false,
       "route": {
         "goal_label": "nulyXWT-evzi0JA8",
         "mode": "flat",
-        "route_input_matches_runtime_goal": "true",
+        "route_input_matches_runtime_goal": true,
         "signal": "objective_markers=none; objective_words=117; max_steps=8; success_check=shell"
       },
       "status": "ok",
       "success_check": {
         "command": "cd /workspace && test -x bin/answer.sh && test \"$(bin/answer.sh)\" = \"bravo-42\"",
         "output": "",
-        "passed": "true"
+        "passed": true
       },
       "watcher_checks": 1,
       "workspace": "/tmp/orchid-real-goal-closure-2504/projects/t7kr4lg4uxWHaEke/files"
@@ -164,10 +165,10 @@
         }
       ],
       "blocker": "nil",
-      "closed": "true",
-      "closed_by_status": "true",
+      "closed": true,
+      "closed_by_status": true,
       "duration_ms": 208764,
-      "failure_mode": "nil",
+      "failure_mode": null,
       "goal_id": "wPHAq4m4d-Ftvqy5",
       "goals": [
         {
@@ -197,18 +198,18 @@
       "model_calls": 17,
       "nudges": 0,
       "project_id": "0orqN1o_QXfuqrVr",
-      "reliability_failure": "false",
+      "reliability_failure": false,
       "route": {
         "goal_label": "wPHAq4m4d-Ftvqy5",
         "mode": "flat",
-        "route_input_matches_runtime_goal": "true",
+        "route_input_matches_runtime_goal": true,
         "signal": "objective_markers=none; objective_words=108; max_steps=8; success_check=shell"
       },
       "status": "ok",
       "success_check": {
         "command": "cd /workspace && test -f data/status.txt && grep -qx 'state=closed' data/status.txt",
         "output": "",
-        "passed": "true"
+        "passed": true
       },
       "watcher_checks": 1,
       "workspace": "/tmp/orchid-real-goal-closure-2504/projects/0orqN1o_QXfuqrVr/files"

@@ -48,6 +48,7 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
     keep_data_dir? = Keyword.get(opts, :keep_data_dir, false)
     data_dir = temp_data_dir()
     started_at = monotonic_ms()
+    previous_trap_exit = Process.flag(:trap_exit, true)
 
     Application.put_env(:orchid, :data_dir, data_dir)
     Application.put_env(:orchid, :goal_watcher_planner_mode, :auto)
@@ -83,6 +84,8 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
         unless keep_data_dir? do
           File.rm_rf(data_dir)
         end
+
+        Process.flag(:trap_exit, previous_trap_exit)
       end
 
     Mix.shell().info(
@@ -785,6 +788,10 @@ defmodule Mix.Tasks.Orchid.RealGoalClosure do
         "empty response",
         "no decodable output",
         "api_key_missing",
+        "database or disk is full",
+        "no space left",
+        "enospc",
+        "container save",
         "timed out starting orchid mcp bridge",
         "openrouter api error"
       ],
