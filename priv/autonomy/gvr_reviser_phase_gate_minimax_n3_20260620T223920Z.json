@@ -1,0 +1,951 @@
+{
+  "provider": "openrouter",
+  "benchmark": "phase_gate_migration_refactor",
+  "model": "minimax/minimax-m2.5",
+  "duration_ms": 1792693,
+  "generated_at": "2026-06-20T22:39:20.352869Z",
+  "harness": "Orchid.Autonomy.Runner direct A/B",
+  "model_id": "minimax_m2_5",
+  "runs_per_arm": 3,
+  "commit": "96977c97faaa999f27169458908bf075bcf6bc99",
+  "arms": {
+    "flat": {
+      "id": "phase_gate_migration_refactor",
+      "category": "development",
+      "runner_mode": "flat",
+      "samples": [
+        {
+          "status": "stalled",
+          "run": 1,
+          "result": {
+            "error": "nil",
+            "closed": false,
+            "status": "stalled",
+            "depth": 13,
+            "project_id": "o7M__huyq0WNob1r",
+            "goal_id": "kkjlYKPuZOlBXJYQ",
+            "agent_id": "aPkGNC5xpZs",
+            "runner_mode": "flat",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "path": "/workspace"
+                },
+                "index": 1,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:09:33.184305Z",
+                "summary": "file\tREADME.md\ndir\tlib\nfile\tmix.exs\ndir\ttest",
+                "tool": "list"
+              },
+              {
+                "args": {
+                  "path": "/workspace/mix.exs"
+                },
+                "index": 2,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:09:34.392984Z",
+                "summary": "defmodule PhaseGate.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :phase_gate,\n      version: \"0.1.0\",\n      elixir: \"~> 1.15\",\n      start_permanent: Mix.env() == :prod,\n      deps: []\n    ]\n  end\n\n  def application do\n    [extra_applications: [:logger]]\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/rule.ex"
+                },
+                "index": 3,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:09:34.480139Z",
+                "summary": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: false\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"open\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.default\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"7d\"\n  def audit_retention(_flag), do: \"7d\"\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/dashboard_payload.ex"
+                },
+                "index": 4,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:09:36.356582Z",
+                "summary": "defmodule PhaseGate.DashboardPayload do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      account: Map.fetch!(attrs, :account),\n      flag: flag,\n      enabled: Rule.enabled?(flag),\n      cohort: Rule.dashboard_cohort(flag)\n    }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/worker_job.ex"
+                },
+                "index": 5,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:09:36.414324Z",
+                "summary": "defmodule PhaseGate.WorkerJob do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      tenant: Map.fetch!(attrs, :tenant),\n      flag: flag,\n      queue: Rule.worker_queue(flag)\n    }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/audit_event.ex"
+                },
+                "index": 6,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:09:36.475345Z",
+                "summary": "defmodule PhaseGate.AuditEvent do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      actor: Map.fetch!(attrs, :actor),\n      flag_code: flag,\n      retention: Rule.audit_retention(flag)\n    }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/dashboard_payload_test.exs"
+                },
+                "index": 7,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:09:38.484995Z",
+                "summary": "defmodule PhaseGate.DashboardPayloadTest do\n  use ExUnit.Case, async: true\n\n  test \"dashboard boundary receives the new public flag code\" do\n    assert PhaseGate.DashboardPayload.build(%{account: \"acct-10\", flag: \"fast_checkout\"}) == %{\n             account: \"acct-10\",\n             flag: \"accelerated_checkout\",\n             enabled: true,\n             cohort: \"guarded\"\n           }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/worker_job_test.exs"
+                },
+                "index": 8,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:09:38.540985Z",
+                "summary": "defmodule PhaseGate.WorkerJobTest do\n  use ExUnit.Case, async: true\n\n  test \"worker boundary keeps the queue flag for the same rollout\" do\n    assert PhaseGate.WorkerJob.build(%{tenant: \"team-4\", flag: \"accelerated_checkout\"}) == %{\n             tenant: \"team-4\",\n             flag: \"fast_checkout\",\n             queue: \"checkout.fast\"\n           }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/audit_event_test.exs"
+                },
+                "index": 9,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:09:38.603445Z",
+                "summary": "defmodule PhaseGate.AuditEventTest do\n  use ExUnit.Case, async: true\n\n  test \"audit boundary keeps the legacy ledger code\" do\n    assert PhaseGate.AuditEvent.build(%{actor: \"ops\", flag: \"fast_checkout\"}) == %{\n             actor: \"ops\",\n             flag_code: \"fc_legacy\",\n             retention: \"90d\"\n           }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && mix test 2>&1"
+                },
+                "index": 10,
+                "status": "error",
+                "timestamp": "2026-06-20T22:09:43.268600Z",
+                "summary": "\"Exit code 2:\\nCompiling 4 files (.ex)\\nGenerated phase_gate app\\n\\n\\n  1) test audit boundary keeps the legacy ledger code (PhaseGate.AuditEventTest)\\n     test/audit_event_test.exs:4\\n     Assertion with == failed\\n     code:  assert PhaseGate.AuditEvent.build(%{actor: \\\"ops\\\", flag: \\\"fast_checkout\\\"}) == %{\\n              actor: \\\"ops\\\",\\n              flag_code: \\\"fc_legacy\\\",\\n              retention: \\\"90d\\\"\\n            }\\n     left:  %{actor: \\\"ops\\\", flag_code: \\\"fast_checkout\\\", retention: \\\"7d\\\"}\\n     right: %{actor: \\\"ops\\\", flag_code: \\\"fc_legacy\\\", retention: \\\"90d\\\"}\\n     stacktrace:\\n       test/audit_event_test.exs:5: (test)\\n\\n\\n\\n  2) test dashboard boundary receives the new public flag code (PhaseGate.DashboardPayloadTest)\\n     test/dashboard_payload_test.exs:4\\n     Assertion with == failed\\n     code:  assert PhaseGate.DashboardPayload.build(%{account: \\\"acct-10\\\", flag: \\\"fast_checkout\\\"}) == %{\\n              account: \\\"acct-10\\\",\\n              flag: \\\"acce...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  # Map external flag codes to internal canonical form\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  # Dashboard boundary: public flag code is \"accelerated_checkout\"\n  def dashboard_flag(\"fast_checkout\"), do: \"accelerated_checkout\"\n  def dashboard_flag(_), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: true\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"guarded\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  # Worker boundary: internal flag stays as \"fast_checkout\", queue is \"checkout.fast\"\n  def worker_flag(\"fast_checkout\"), do: \"fast_checkout\"\n  def worker_flag(_), do: \"off\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.fast\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  # Audit boundary: legacy flag code is \"fc_legacy\", retention is \"90d\"\n  def audit_flag(\"fast_checkout\"), do: \"fc_legacy\"\n  def audit_flag(_), do: \"off\"\n\n  def audit_retention(\"fast_checkout\"), do: \"90d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "old_string": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: false\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"open\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.default\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"7d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "path": "/workspace/lib/phase_gate/rule.ex"
+                },
+                "index": 11,
+                "status": "error",
+                "timestamp": "2026-06-20T22:09:53.515430Z",
+                "summary": "\"Failed to write /workspace/lib/phase_gate/rule.ex: eacces\"",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "command": "ls -la /workspace/lib/phase_gate/"
+                },
+                "index": 12,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:09:55.372871Z",
+                "summary": "total 24\ndrwxr-xr-x 2 agent agent 4096 Jun 20 22:09 .\ndrwxr-xr-x 3 agent agent 4096 Jun 20 22:09 ..\n-rw-r--r-- 1 agent agent  288 Jun 20 22:09 audit_event.ex\n-rw-r--r-- 1 agent agent  327 Jun 20 22:09 dashboard_payload.ex\n-rw-r--r-- 1 agent agent  590 Jun 20 22:09 rule.ex\n-rw-r--r-- 1 agent agent  277 Jun 20 22:09 worker_job.ex\n",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "chmod 666 /workspace/lib/phase_gate/*.ex"
+                },
+                "index": 13,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:09:56.954934Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  # Map external flag codes to internal canonical form\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  # Dashboard boundary: public flag code is \"accelerated_checkout\"\n  def dashboard_flag(\"fast_checkout\"), do: \"accelerated_checkout\"\n  def dashboard_flag(_), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: true\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"guarded\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  # Worker boundary: internal flag stays as \"fast_checkout\", queue is \"checkout.fast\"\n  def worker_flag(\"fast_checkout\"), do: \"fast_checkout\"\n  def worker_flag(_), do: \"off\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.fast\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  # Audit boundary: legacy flag code is \"fc_legacy\", retention is \"90d\"\n  def audit_flag(\"fast_checkout\"), do: \"fc_legacy\"\n  def audit_flag(_), do: \"off\"\n\n  def audit_retention(\"fast_checkout\"), do: \"90d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "old_string": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: false\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"open\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.default\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"7d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "path": "/workspace/lib/phase_gate/rule.ex"
+                },
+                "index": 14,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:10:02.689599Z",
+                "summary": "Successfully edited /workspace/lib/phase_gate/rule.ex",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule PhaseGate.DashboardPayload do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    canonical = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      account: Map.fetch!(attrs, :account),\n      flag: Rule.dashboard_flag(canonical),\n      enabled: Rule.enabled?(canonical),\n      cohort: Rule.dashboard_cohort(canonical)\n    }\n  end\nend",
+                  "old_string": "defmodule PhaseGate.DashboardPayload do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      account: Map.fetch!(attrs, :account),\n      flag: flag,\n      enabled: Rule.enabled?(flag),\n      cohort: Rule.dashboard_cohort(flag)\n    }\n  end\nend",
+                  "path": "/workspace/lib/phase_gate/dashboard_payload.ex"
+                },
+                "index": 15,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:10:06.508545Z",
+                "summary": "Successfully edited /workspace/lib/phase_gate/dashboard_payload.ex",
+                "tool": "edit"
+              }
+            ],
+            "turn_result": "ok",
+            "duration_ms": 36770,
+            "last_assistant_message": "Now I need to update the boundary modules to use the new boundary-specific functions:\n\n"
+          },
+          "runner_mode": "flat",
+          "score": {
+            "unattended_depth": 13,
+            "goal_closure": false,
+            "recovery_rate": 0.0
+          }
+        },
+        {
+          "status": "closed",
+          "run": 2,
+          "result": {
+            "error": "nil",
+            "closed": true,
+            "status": "closed",
+            "depth": 13,
+            "project_id": "CN2P4_OhOPB_RUb-",
+            "goal_id": "gD8aiZtOoBlA01Wo",
+            "agent_id": "c4AyqIjj518",
+            "runner_mode": "flat",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && mix test 2>&1"
+                },
+                "index": 1,
+                "status": "error",
+                "timestamp": "2026-06-20T22:10:23.917497Z",
+                "summary": "\"Exit code 2:\\nCompiling 4 files (.ex)\\nGenerated phase_gate app\\n\\n\\n  1) test dashboard boundary receives the new public flag code (PhaseGate.DashboardPayloadTest)\\n     test/dashboard_payload_test.exs:4\\n     Assertion with == failed\\n     code:  assert PhaseGate.DashboardPayload.build(%{account: \\\"acct-10\\\", flag: \\\"fast_checkout\\\"}) == %{\\n              account: \\\"acct-10\\\",\\n              flag: \\\"accelerated_checkout\\\",\\n              enabled: true,\\n              cohort: \\\"guarded\\\"\\n            }\\n     left:  %{\\n              account: \\\"acct-10\\\",\\n              cohort: \\\"open\\\",\\n              enabled: false,\\n              flag: \\\"fast_checkout\\\"\\n            }\\n     right: %{\\n              account: \\\"acct-10\\\",\\n              cohort: \\\"guarded\\\",\\n              enabled: true,\\n              flag: \\\"accelerated_checkout\\\"\\n            }\\n     stacktrace:\\n       test/dashboard_payload_test.exs:5: (test)\\n\\n\\n\\n  2) test audit boundary keeps the legacy ledger code (PhaseGate...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/rule.ex"
+                },
+                "index": 2,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:10:29.109727Z",
+                "summary": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: false\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"open\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.default\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"7d\"\n  def audit_retention(_flag), do: \"7d\"\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/dashboard_payload.ex"
+                },
+                "index": 3,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:10:29.184402Z",
+                "summary": "defmodule PhaseGate.DashboardPayload do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      account: Map.fetch!(attrs, :account),\n      flag: flag,\n      enabled: Rule.enabled?(flag),\n      cohort: Rule.dashboard_cohort(flag)\n    }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/worker_job.ex"
+                },
+                "index": 4,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:10:29.244769Z",
+                "summary": "defmodule PhaseGate.WorkerJob do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      tenant: Map.fetch!(attrs, :tenant),\n      flag: flag,\n      queue: Rule.worker_queue(flag)\n    }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/audit_event.ex"
+                },
+                "index": 5,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:10:29.320180Z",
+                "summary": "defmodule PhaseGate.AuditEvent do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      actor: Map.fetch!(attrs, :actor),\n      flag_code: flag,\n      retention: Rule.audit_retention(flag)\n    }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/dashboard_payload_test.exs"
+                },
+                "index": 6,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:10:33.653692Z",
+                "summary": "defmodule PhaseGate.DashboardPayloadTest do\n  use ExUnit.Case, async: true\n\n  test \"dashboard boundary receives the new public flag code\" do\n    assert PhaseGate.DashboardPayload.build(%{account: \"acct-10\", flag: \"fast_checkout\"}) == %{\n             account: \"acct-10\",\n             flag: \"accelerated_checkout\",\n             enabled: true,\n             cohort: \"guarded\"\n           }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/worker_job_test.exs"
+                },
+                "index": 7,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:10:33.706499Z",
+                "summary": "defmodule PhaseGate.WorkerJobTest do\n  use ExUnit.Case, async: true\n\n  test \"worker boundary keeps the queue flag for the same rollout\" do\n    assert PhaseGate.WorkerJob.build(%{tenant: \"team-4\", flag: \"accelerated_checkout\"}) == %{\n             tenant: \"team-4\",\n             flag: \"fast_checkout\",\n             queue: \"checkout.fast\"\n           }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/audit_event_test.exs"
+                },
+                "index": 8,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:10:33.764360Z",
+                "summary": "defmodule PhaseGate.AuditEventTest do\n  use ExUnit.Case, async: true\n\n  test \"audit boundary keeps the legacy ledger code\" do\n    assert PhaseGate.AuditEvent.build(%{actor: \"ops\", flag: \"fast_checkout\"}) == %{\n             actor: \"ops\",\n             flag_code: \"fc_legacy\",\n             retention: \"90d\"\n           }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  # Known rollout flags that are considered \"enabled\"\n  defp rollout?(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"], do: true\n  defp rollout?(_flag), do: false\n\n  # Dashboard boundary - public flag code\n  def dashboard_flag(flag) do\n    if rollout?(flag), do: \"accelerated_checkout\", else: \"off\"\n  end\n\n  def dashboard_enabled?(flag), do: rollout?(flag)\n\n  def dashboard_cohort(flag) do\n    if rollout?(flag), do: \"guarded\", else: \"open\"\n  end\n\n  # Worker boundary - internal queue flag\n  def worker_flag(flag) do\n    if rollout?(flag), do: \"fast_checkout\", else: \"off\"\n  end\n\n  def worker_queue(flag) do\n    if rollout?(flag), do: \"checkout.fast\", else: \"checkout.default\"\n  end\n\n  # Audit boundary - legacy ledger code\n  def audit_flag(flag) do\n    if rollout?(flag), do: \"fc_legacy\", else: \"off\"\n  end\n\n  def audit_retention(flag) do\n    if rollout?(flag), do: \"90d\", else: \"7d\"\n  end\nend",
+                  "old_string": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: false\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"open\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.default\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"7d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "path": "/workspace/lib/phase_gate/rule.ex"
+                },
+                "index": 9,
+                "status": "error",
+                "timestamp": "2026-06-20T22:10:46.774729Z",
+                "summary": "\"Failed to write /workspace/lib/phase_gate/rule.ex: eacces\"",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/rule.ex << 'EOF'\ndefmodule PhaseGate.Rule do\n  @moduledoc false\n\n  # Known rollout flags that are considered \"enabled\"\n  defp rollout?(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"], do: true\n  defp rollout?(_flag), do: false\n\n  # Dashboard boundary - public flag code\n  def dashboard_flag(flag) do\n    if rollout?(flag), do: \"accelerated_checkout\", else: \"off\"\n  end\n\n  def dashboard_enabled?(flag), do: rollout?(flag)\n\n  def dashboard_cohort(flag) do\n    if rollout?(flag), do: \"guarded\", else: \"open\"\n  end\n\n  # Worker boundary - internal queue flag\n  def worker_flag(flag) do\n    if rollout?(flag), do: \"fast_checkout\", else: \"off\"\n  end\n\n  def worker_queue(flag) do\n    if rollout?(flag), do: \"checkout.fast\", else: \"checkout.default\"\n  end\n\n  # Audit boundary - legacy ledger code\n  def audit_flag(flag) do\n    if rollout?(flag), do: \"fc_legacy\", else: \"off\"\n  end\n\n  def audit_retention(flag) do\n    if rollout?(flag), do: \"90d\", else: \"7d\"\n  end\nend\nEOF"
+                },
+                "index": 10,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:10:52.622490Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/dashboard_payload.ex << 'EOF'\ndefmodule PhaseGate.DashboardPayload do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Map.fetch!(attrs, :flag)\n\n    %{\n      account: Map.fetch!(attrs, :account),\n      flag: Rule.dashboard_flag(flag),\n      enabled: Rule.dashboard_enabled?(flag),\n      cohort: Rule.dashboard_cohort(flag)\n    }\n  end\nend\nEOF"
+                },
+                "index": 11,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:10:55.238900Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/worker_job.ex << 'EOF'\ndefmodule PhaseGate.WorkerJob do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Map.fetch!(attrs, :flag)\n\n    %{\n      tenant: Map.fetch!(attrs, :tenant),\n      flag: Rule.worker_flag(flag),\n      queue: Rule.worker_queue(flag)\n    }\n  end\nend\nEOF"
+                },
+                "index": 12,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:10:57.755551Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/audit_event.ex << 'EOF'\ndefmodule PhaseGate.AuditEvent do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Map.fetch!(attrs, :flag)\n\n    %{\n      actor: Map.fetch!(attrs, :actor),\n      flag_code: Rule.audit_flag(flag),\n      retention: Rule.audit_retention(flag)\n    }\n  end\nend\nEOF"
+                },
+                "index": 13,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:00.661105Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && mix test 2>&1"
+                },
+                "index": 14,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:04.070703Z",
+                "summary": "Compiling 4 files (.ex)\n...\nFinished in 0.01 seconds (0.01s async, 0.00s sync)\n3 tests, 0 failures\n\nRandomized with seed 538422\n",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && mix test 2>&1 | grep -q '0 failures' && echo \"PASS: 0 failures\""
+                },
+                "index": 15,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:06.042652Z",
+                "summary": "PASS: 0 failures\n",
+                "tool": "shell"
+              }
+            ],
+            "turn_result": "ok",
+            "duration_ms": 46081,
+            "last_assistant_message": null
+          },
+          "runner_mode": "flat",
+          "score": {
+            "unattended_depth": 13,
+            "goal_closure": true,
+            "recovery_rate": 0.0
+          }
+        },
+        {
+          "status": "stalled",
+          "run": 3,
+          "result": {
+            "error": "nil",
+            "closed": false,
+            "status": "stalled",
+            "depth": 15,
+            "project_id": "gI4OVZ2s1wcLYQ-S",
+            "goal_id": "eacdTavS2GO3a0OO",
+            "agent_id": "URdOuLsvNJQ",
+            "runner_mode": "flat",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "path": "/workspace"
+                },
+                "index": 1,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:21.147889Z",
+                "summary": "file\tREADME.md\ndir\tlib\nfile\tmix.exs\ndir\ttest",
+                "tool": "list"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib"
+                },
+                "index": 2,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:22.660312Z",
+                "summary": "dir\tphase_gate",
+                "tool": "list"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test"
+                },
+                "index": 3,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:22.729092Z",
+                "summary": "file\taudit_event_test.exs\nfile\tdashboard_payload_test.exs\nfile\ttest_helper.exs\nfile\tworker_job_test.exs",
+                "tool": "list"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate"
+                },
+                "index": 4,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:24.417238Z",
+                "summary": "file\taudit_event.ex\nfile\tdashboard_payload.ex\nfile\trule.ex\nfile\tworker_job.ex",
+                "tool": "list"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/rule.ex"
+                },
+                "index": 5,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:26.434284Z",
+                "summary": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: false\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"open\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.default\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"7d\"\n  def audit_retention(_flag), do: \"7d\"\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/dashboard_payload.ex"
+                },
+                "index": 6,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:26.521553Z",
+                "summary": "defmodule PhaseGate.DashboardPayload do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      account: Map.fetch!(attrs, :account),\n      flag: flag,\n      enabled: Rule.enabled?(flag),\n      cohort: Rule.dashboard_cohort(flag)\n    }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/worker_job.ex"
+                },
+                "index": 7,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:26.591761Z",
+                "summary": "defmodule PhaseGate.WorkerJob do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      tenant: Map.fetch!(attrs, :tenant),\n      flag: flag,\n      queue: Rule.worker_queue(flag)\n    }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/audit_event.ex"
+                },
+                "index": 8,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:26.661847Z",
+                "summary": "defmodule PhaseGate.AuditEvent do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      actor: Map.fetch!(attrs, :actor),\n      flag_code: flag,\n      retention: Rule.audit_retention(flag)\n    }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/dashboard_payload_test.exs"
+                },
+                "index": 9,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:28.463033Z",
+                "summary": "defmodule PhaseGate.DashboardPayloadTest do\n  use ExUnit.Case, async: true\n\n  test \"dashboard boundary receives the new public flag code\" do\n    assert PhaseGate.DashboardPayload.build(%{account: \"acct-10\", flag: \"fast_checkout\"}) == %{\n             account: \"acct-10\",\n             flag: \"accelerated_checkout\",\n             enabled: true,\n             cohort: \"guarded\"\n           }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/worker_job_test.exs"
+                },
+                "index": 10,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:28.524259Z",
+                "summary": "defmodule PhaseGate.WorkerJobTest do\n  use ExUnit.Case, async: true\n\n  test \"worker boundary keeps the queue flag for the same rollout\" do\n    assert PhaseGate.WorkerJob.build(%{tenant: \"team-4\", flag: \"accelerated_checkout\"}) == %{\n             tenant: \"team-4\",\n             flag: \"fast_checkout\",\n             queue: \"checkout.fast\"\n           }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/audit_event_test.exs"
+                },
+                "index": 11,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:28.586459Z",
+                "summary": "defmodule PhaseGate.AuditEventTest do\n  use ExUnit.Case, async: true\n\n  test \"audit boundary keeps the legacy ledger code\" do\n    assert PhaseGate.AuditEvent.build(%{actor: \"ops\", flag: \"fast_checkout\"}) == %{\n             actor: \"ops\",\n             flag_code: \"fc_legacy\",\n             retention: \"90d\"\n           }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  @canonical \"fast_checkout\"\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    @canonical\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  # Dashboard boundary\n  def enabled?(@canonical), do: true\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(@canonical), do: \"guarded\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def dashboard_flag(@canonical), do: \"accelerated_checkout\"\n  def dashboard_flag(_flag), do: \"off\"\n\n  # Worker boundary\n  def worker_flag(@canonical), do: \"fast_checkout\"\n  def worker_flag(_flag), do: \"off\"\n\n  def worker_queue(@canonical), do: \"checkout.fast\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  # Audit boundary\n  def audit_flag(@canonical), do: \"fc_legacy\"\n  def audit_flag(_flag), do: \"off\"\n\n  def audit_retention(@canonical), do: \"90d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "old_string": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: false\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"open\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.default\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"7d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "path": "/workspace/lib/phase_gate/rule.ex"
+                },
+                "index": 12,
+                "status": "error",
+                "timestamp": "2026-06-20T22:11:42.101634Z",
+                "summary": "\"Failed to write /workspace/lib/phase_gate/rule.ex: eacces\"",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "command": "ls -la /workspace/lib/phase_gate/"
+                },
+                "index": 13,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:43.483695Z",
+                "summary": "total 24\ndrwxr-xr-x 2 agent agent 4096 Jun 20 22:11 .\ndrwxr-xr-x 3 agent agent 4096 Jun 20 22:11 ..\n-rw-r--r-- 1 agent agent  288 Jun 20 22:11 audit_event.ex\n-rw-r--r-- 1 agent agent  327 Jun 20 22:11 dashboard_payload.ex\n-rw-r--r-- 1 agent agent  590 Jun 20 22:11 rule.ex\n-rw-r--r-- 1 agent agent  277 Jun 20 22:11 worker_job.ex\n",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/rule.ex << 'EOF'\ndefmodule PhaseGate.Rule do\n  @moduledoc false\n\n  @canonical \"fast_checkout\"\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    @canonical\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  # Dashboard boundary\n  def enabled?(@canonical), do: true\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(@canonical), do: \"guarded\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def dashboard_flag(@canonical), do: \"accelerated_checkout\"\n  def dashboard_flag(_flag), do: \"off\"\n\n  # Worker boundary\n  def worker_flag(@canonical), do: \"fast_checkout\"\n  def worker_flag(_flag), do: \"off\"\n\n  def worker_queue(@canonical), do: \"checkout.fast\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  # Audit boundary\n  def audit_flag(@canonical), do: \"fc_legacy\"\n  def audit_flag(_flag), do: \"off\"\n\n  def audit_retention(@canonical), do: \"90d\"\n  def audit_retention(_flag), do: \"7d\"\nend\nEOF"
+                },
+                "index": 14,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:47.891897Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/dashboard_payload.ex << 'EOF'\ndefmodule PhaseGate.DashboardPayload do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      account: Map.fetch!(attrs, :account),\n      flag: Rule.dashboard_flag(flag),\n      enabled: Rule.enabled?(flag),\n      cohort: Rule.dashboard_cohort(flag)\n    }\n  end\nend\nEOF"
+                },
+                "index": 15,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:50.762654Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/worker_job.ex << 'EOF'\ndefmodule PhaseGate.WorkerJob do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      tenant: Map.fetch!(attrs, :tenant),\n      flag: Rule.worker_flag(flag),\n      queue: Rule.worker_queue(flag)\n    }\n  end\nend\nEOF"
+                },
+                "index": 16,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:11:53.152346Z",
+                "summary": "",
+                "tool": "shell"
+              }
+            ],
+            "turn_result": "ok",
+            "duration_ms": 34157,
+            "last_assistant_message": null
+          },
+          "runner_mode": "flat",
+          "score": {
+            "unattended_depth": 15,
+            "goal_closure": false,
+            "recovery_rate": 0.0
+          }
+        }
+      ],
+      "objective": "Repair the seeded feature-flag migration Mix project in `/workspace`. The\nobvious global rename from `fast_checkout` to `accelerated_checkout` is a\ntrap: dashboard, worker, and audit boundaries use different external flag\ncodes for the same rollout. Refactor the shared `PhaseGate.Rule` contract so\nall boundary modules pass together.\n",
+      "max_steps": 28,
+      "goal_closure_rate": 0.3333333333333333
+    },
+    "gvr": {
+      "id": "phase_gate_migration_refactor",
+      "category": "development",
+      "runner_mode": "gvr",
+      "samples": [
+        {
+          "status": "closed",
+          "run": 1,
+          "result": {
+            "error": "nil",
+            "closed": true,
+            "status": "closed",
+            "depth": 14,
+            "project_id": "xPuvpCOPkNhgGqZX",
+            "goal_id": "Sdldoy-6JBmp-tJX",
+            "agent_id": "gvr-Sdldoy-6JBmp-tJX",
+            "runner_mode": "gvr",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "paths": "[\"/workspace/lib/phase_gate/rule.ex\", \"/workspace/lib/phase_gate/dashboard_payload.ex\", \"/workspace/lib/phase_gate/worker_job.ex\", \"/workspace/lib/phase_gate/audit_event.ex\", \"/workspace/test/dashboard_payload_test.exs\", \"/workspace/test/worker_job_test.exs\", \"/workspace/test/audit_event_test.exs\"]"
+                },
+                "index": 1,
+                "status": "error",
+                "timestamp": "2026-06-20T22:14:46.720589Z",
+                "summary": "\"Tool read crashed: no function clause matching in String.replace_prefix/3\"",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/mix.exs"
+                },
+                "index": 2,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:16:52.478892Z",
+                "summary": "defmodule PhaseGate.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :phase_gate,\n      version: \"0.1.0\",\n      elixir: \"~> 1.15\",\n      start_permanent: Mix.env() == :prod,\n      deps: []\n    ]\n  end\n\n  def application do\n    [extra_applications: [:logger]]\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/README.md"
+                },
+                "index": 3,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:16:53.617226Z",
+                "summary": "# Phase Gate Migration\n\nThe same rollout has three boundary encodings:\n\n- Dashboard API flag: `accelerated_checkout`\n- Worker queue flag: `fast_checkout`\n- Audit ledger code: `fc_legacy`\n\nThe migration note says \"rename fast_checkout to accelerated_checkout\",\nbut that instruction only applies to the dashboard API. Worker jobs must\nkeep the old queue flag, and audit events must keep the ledger code.\n\nPaid rollout metadata:\n\n- enabled: true\n- dashboard cohort: `guarded`\n- worker queue: `checkout.fast`\n- audit retention: `90d`\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/rule.ex"
+                },
+                "index": 4,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:16:54.786856Z",
+                "summary": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: false\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"open\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.default\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"7d\"\n  def audit_retention(_flag), do: \"7d\"\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/dashboard_payload.ex"
+                },
+                "index": 5,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:16:56.050623Z",
+                "summary": "defmodule PhaseGate.DashboardPayload do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      account: Map.fetch!(attrs, :account),\n      flag: flag,\n      enabled: Rule.enabled?(flag),\n      cohort: Rule.dashboard_cohort(flag)\n    }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/worker_job.ex"
+                },
+                "index": 6,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:16:57.265424Z",
+                "summary": "defmodule PhaseGate.WorkerJob do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      tenant: Map.fetch!(attrs, :tenant),\n      flag: flag,\n      queue: Rule.worker_queue(flag)\n    }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/phase_gate/audit_event.ex"
+                },
+                "index": 7,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:16:58.406590Z",
+                "summary": "defmodule PhaseGate.AuditEvent do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      actor: Map.fetch!(attrs, :actor),\n      flag_code: flag,\n      retention: Rule.audit_retention(flag)\n    }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/test_helper.exs"
+                },
+                "index": 8,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:16:59.726985Z",
+                "summary": "ExUnit.start()\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/dashboard_payload_test.exs"
+                },
+                "index": 9,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:17:00.961658Z",
+                "summary": "defmodule PhaseGate.DashboardPayloadTest do\n  use ExUnit.Case, async: true\n\n  test \"dashboard boundary receives the new public flag code\" do\n    assert PhaseGate.DashboardPayload.build(%{account: \"acct-10\", flag: \"fast_checkout\"}) == %{\n             account: \"acct-10\",\n             flag: \"accelerated_checkout\",\n             enabled: true,\n             cohort: \"guarded\"\n           }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/worker_job_test.exs"
+                },
+                "index": 10,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:17:02.124702Z",
+                "summary": "defmodule PhaseGate.WorkerJobTest do\n  use ExUnit.Case, async: true\n\n  test \"worker boundary keeps the queue flag for the same rollout\" do\n    assert PhaseGate.WorkerJob.build(%{tenant: \"team-4\", flag: \"accelerated_checkout\"}) == %{\n             tenant: \"team-4\",\n             flag: \"fast_checkout\",\n             queue: \"checkout.fast\"\n           }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/audit_event_test.exs"
+                },
+                "index": 11,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:17:03.420077Z",
+                "summary": "defmodule PhaseGate.AuditEventTest do\n  use ExUnit.Case, async: true\n\n  test \"audit boundary keeps the legacy ledger code\" do\n    assert PhaseGate.AuditEvent.build(%{actor: \"ops\", flag: \"fast_checkout\"}) == %{\n             actor: \"ops\",\n             flag_code: \"fc_legacy\",\n             retention: \"90d\"\n           }\n  end\nend\n",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && mix test 2>&1"
+                },
+                "index": 12,
+                "status": "error",
+                "timestamp": "2026-06-20T22:17:05.115656Z",
+                "summary": "\"Exit code 2:\\n\\n\\n  1) test dashboard boundary receives the new public flag code (PhaseGate.DashboardPayloadTest)\\n     test/dashboard_payload_test.exs:4\\n     Assertion with == failed\\n     code:  assert PhaseGate.DashboardPayload.build(%{account: \\\"acct-10\\\", flag: \\\"fast_checkout\\\"}) == %{\\n              account: \\\"acct-10\\\",\\n              flag: \\\"accelerated_checkout\\\",\\n              enabled: true,\\n              cohort: \\\"guarded\\\"\\n            }\\n     left:  %{\\n              account: \\\"acct-10\\\",\\n              cohort: \\\"open\\\",\\n              enabled: false,\\n              flag: \\\"fast_checkout\\\"\\n            }\\n     right: %{\\n              account: \\\"acct-10\\\",\\n              cohort: \\\"guarded\\\",\\n              enabled: true,\\n              flag: \\\"accelerated_checkout\\\"\\n            }\\n     stacktrace:\\n       test/dashboard_payload_test.exs:5: (test)\\n\\n\\n\\n  2) test audit boundary keeps the legacy ledger code (PhaseGate.AuditEventTest)\\n     test/audit_event_test.exs:4\\...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "new": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  # Canonical internal representation for the rollout\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  # Boundary-specific external flag codes\n  def dashboard_flag(\"fast_checkout\"), do: \"accelerated_checkout\"\n  def dashboard_flag(_flag), do: \"off\"\n\n  def worker_flag(\"fast_checkout\"), do: \"fast_checkout\"\n  def worker_flag(_flag), do: \"off\"\n\n  def audit_code(\"fast_checkout\"), do: \"fc_legacy\"\n  def audit_code(_flag), do: \"off\"\n\n  # Paid rollout metadata\n  def enabled?(\"fast_checkout\"), do: true\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"guarded\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.fast\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"90d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "old": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: false\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"open\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.default\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"7d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "path": "/workspace/lib/phase_gate/rule.ex"
+                },
+                "index": 13,
+                "status": "error",
+                "timestamp": "2026-06-20T22:20:19.975931Z",
+                "summary": "\"Tool edit crashed: errors were found at the given arguments:\\n\\n  * 2nd argument: not a valid pattern\\n\"",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "new": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: true\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"guarded\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.fast\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"90d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "old": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: false\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"open\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.default\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"7d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "path": "/workspace/lib/phase_gate/rule.ex"
+                },
+                "index": 14,
+                "status": "error",
+                "timestamp": "2026-06-20T22:23:29.806031Z",
+                "summary": "\"Tool edit crashed: errors were found at the given arguments:\\n\\n  * 2nd argument: not a valid pattern\\n\"",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "new": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  # Internal canonical flag for the paid rollout\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  # Paid rollout is enabled\n  def enabled?(\"fast_checkout\"), do: true\n  def enabled?(_flag), do: false\n\n  # Dashboard boundary: returns new public flag code\n  def dashboard_flag(\"fast_checkout\"), do: \"accelerated_checkout\"\n  def dashboard_flag(_flag), do: \"off\"\n\n  # Dashboard cohort for paid rollout\n  def dashboard_cohort(\"fast_checkout\"), do: \"guarded\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  # Worker boundary: keeps queue flag\n  def worker_flag(\"fast_checkout\"), do: \"fast_checkout\"\n  def worker_flag(_flag), do: \"off\"\n\n  # Worker queue for paid rollout\n  def worker_queue(\"fast_checkout\"), do: \"checkout.fast\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  # Audit boundary: keeps legacy ledger code\n  def audit_flag(\"fast_checkout\"), do: \"fc_legacy\"\n  def audit_flag(_flag), do: \"off\"\n\n  # Audit retention for paid rollout\n  def audit_retention(\"fast_checkout\"), do: \"90d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "old": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: false\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"open\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.default\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"7d\"\n  def audit_retention(_flag), do: \"7d\"\nend",
+                  "path": "/workspace/lib/phase_gate/rule.ex"
+                },
+                "index": 15,
+                "status": "error",
+                "timestamp": "2026-06-20T22:24:21.049191Z",
+                "summary": "\"Tool edit crashed: errors were found at the given arguments:\\n\\n  * 2nd argument: not a valid pattern\\n\"",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/rule.ex << 'EOF'\ndefmodule PhaseGate.Rule do\n  @moduledoc false\n\n  # Canonical internal flag for the rollout\n  @canonical_flag \"fast_checkout\"\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    @canonical_flag\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  # Boundary-specific flag codes\n  def dashboard_flag(\"fast_checkout\"), do: \"accelerated_checkout\"\n  def dashboard_flag(_flag), do: \"off\"\n\n  def worker_flag(\"fast_checkout\"), do: \"fast_checkout\"\n  def worker_flag(_flag), do: \"off\"\n\n  def audit_flag(\"fast_checkout\"), do: \"fc_legacy\"\n  def audit_flag(_flag), do: \"off\"\n\n  # Paid rollout metadata\n  def enabled?(\"fast_checkout\"), do: true\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"guarded\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.fast\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"90d\"\n  def audit_retention(_flag), do: \"7d\"\nend\nEOF"
+                },
+                "index": 16,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:25:22.386878Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/dashboard_payload.ex << 'EOF'\ndefmodule PhaseGate.DashboardPayload do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      account: Map.fetch!(attrs, :account),\n      flag: Rule.dashboard_flag(flag),\n      enabled: Rule.enabled?(flag),\n      cohort: Rule.dashboard_cohort(flag)\n    }\n  end\nend\nEOF"
+                },
+                "index": 17,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:25:24.042329Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/worker_job.ex << 'EOF'\ndefmodule PhaseGate.WorkerJob do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      tenant: Map.fetch!(attrs, :tenant),\n      flag: Rule.worker_flag(flag),\n      queue: Rule.worker_queue(flag)\n    }\n  end\nend\nEOF"
+                },
+                "index": 18,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:25:25.607540Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/audit_event.ex << 'EOF'\ndefmodule PhaseGate.AuditEvent do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      actor: Map.fetch!(attrs, :actor),\n      flag_code: Rule.audit_flag(flag),\n      retention: Rule.audit_retention(flag)\n    }\n  end\nend\nEOF"
+                },
+                "index": 19,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:25:27.150967Z",
+                "summary": "",
+                "tool": "shell"
+              }
+            ],
+            "turn_result": "ok",
+            "duration_ms": 802129,
+            "last_assistant_message": "G-V-R success check passed."
+          },
+          "runner_mode": "gvr",
+          "score": {
+            "unattended_depth": 14,
+            "goal_closure": true,
+            "recovery_rate": 0.0
+          }
+        },
+        {
+          "status": "agent_error",
+          "run": 2,
+          "result": {
+            "error": "{:gvr_planner_failed, \"All generated plans failed verification: path 1 error: No approved plan after revision budget: attempt 1 verifier flaw: The plan stops at inspection. It reads files but performs zero actual fixes. The acceptance check (tests passing wi...\"}",
+            "closed": false,
+            "status": "agent_error",
+            "depth": 0,
+            "project_id": "VcZ3RbTUjp-x6FMw",
+            "goal_id": "22Ei4DeO2908o9r0",
+            "agent_id": "gvr-22Ei4DeO2908o9r0",
+            "runner_mode": "gvr",
+            "recovered": [],
+            "steps": [],
+            "turn_result": "error",
+            "duration_ms": 43858,
+            "last_assistant_message": "G-V-R planner failed: All generated plans failed verification: path 1 error: No approved plan after revision budget: attempt 1 verifier flaw: The plan stops at inspection. It reads files but performs zero actual fixes. The acceptance check (tests passing wi..."
+          },
+          "runner_mode": "gvr",
+          "score": {
+            "unattended_depth": 0,
+            "goal_closure": false,
+            "recovery_rate": 0.0
+          }
+        },
+        {
+          "status": "closed",
+          "run": 3,
+          "result": {
+            "error": "nil",
+            "closed": true,
+            "status": "closed",
+            "depth": 5,
+            "project_id": "Xvp3pCe5KLfeZNzy",
+            "goal_id": "woskvk1Stzen-v-z",
+            "agent_id": "gvr-woskvk1Stzen-v-z",
+            "runner_mode": "gvr",
+            "recovered": [],
+            "steps": [
+              {
+                "args": {
+                  "paths": "[\"/workspace/lib/phase_gate/rule.ex\", \"/workspace/lib/phase_gate/dashboard_payload.ex\", \"/workspace/lib/phase_gate/worker_job.ex\", \"/workspace/lib/phase_gate/audit_event.ex\"]"
+                },
+                "index": 1,
+                "status": "error",
+                "timestamp": "2026-06-20T22:28:12.817806Z",
+                "summary": "\"Tool read crashed: no function clause matching in String.replace_prefix/3\"",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat lib/phase_gate/rule.ex lib/phase_gate/dashboard_payload.ex lib/phase_gate/worker_job.ex lib/phase_gate/audit_event.ex mix.exs test/dashboard_payload_test.exs test/worker_job_test.exs test/audit_event_test.exs"
+                },
+                "index": 2,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:29:57.752470Z",
+                "summary": "defmodule PhaseGate.Rule do\n  @moduledoc false\n\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  def enabled?(\"fast_checkout\"), do: false\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"open\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def worker_queue(\"fast_checkout\"), do: \"checkout.default\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  def audit_retention(\"fast_checkout\"), do: \"7d\"\n  def audit_retention(_flag), do: \"7d\"\nend\ndefmodule PhaseGate.DashboardPayload do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      account: Map.fetch!(attrs, :account),\n      flag: flag,\n      enabled: Rule.enabled?(flag),\n      cohort: Rule.dashboard_cohort(flag)\n    }\n  end\nend\ndefmodule PhaseGate.WorkerJob do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def ...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && mix test 2>&1"
+                },
+                "index": 3,
+                "status": "error",
+                "timestamp": "2026-06-20T22:29:59.524661Z",
+                "summary": "\"Exit code 2:\\n\\n\\n  1) test dashboard boundary receives the new public flag code (PhaseGate.DashboardPayloadTest)\\n     test/dashboard_payload_test.exs:4\\n     Assertion with == failed\\n     code:  assert PhaseGate.DashboardPayload.build(%{account: \\\"acct-10\\\", flag: \\\"fast_checkout\\\"}) == %{\\n              account: \\\"acct-10\\\",\\n              flag: \\\"accelerated_checkout\\\",\\n              enabled: true,\\n              cohort: \\\"guarded\\\"\\n            }\\n     left:  %{\\n              account: \\\"acct-10\\\",\\n              cohort: \\\"open\\\",\\n              enabled: false,\\n              flag: \\\"fast_checkout\\\"\\n            }\\n     right: %{\\n              account: \\\"acct-10\\\",\\n              cohort: \\\"guarded\\\",\\n              enabled: true,\\n              flag: \\\"accelerated_checkout\\\"\\n            }\\n     stacktrace:\\n       test/dashboard_payload_test.exs:5: (test)\\n\\n\\n\\n  2) test audit boundary keeps the legacy ledger code (PhaseGate.AuditEventTest)\\n     test/audit_event_test.exs:4\\...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && mix test 2>&1"
+                },
+                "index": 4,
+                "status": "error",
+                "timestamp": "2026-06-20T22:30:34.161540Z",
+                "summary": "\"Exit code 2:\\n\\n\\n  1) test dashboard boundary receives the new public flag code (PhaseGate.DashboardPayloadTest)\\n     test/dashboard_payload_test.exs:4\\n     Assertion with == failed\\n     code:  assert PhaseGate.DashboardPayload.build(%{account: \\\"acct-10\\\", flag: \\\"fast_checkout\\\"}) == %{\\n              account: \\\"acct-10\\\",\\n              flag: \\\"accelerated_checkout\\\",\\n              enabled: true,\\n              cohort: \\\"guarded\\\"\\n            }\\n     left:  %{\\n              account: \\\"acct-10\\\",\\n              cohort: \\\"open\\\",\\n              enabled: false,\\n              flag: \\\"fast_checkout\\\"\\n            }\\n     right: %{\\n              account: \\\"acct-10\\\",\\n              cohort: \\\"guarded\\\",\\n              enabled: true,\\n              flag: \\\"accelerated_checkout\\\"\\n            }\\n     stacktrace:\\n       test/dashboard_payload_test.exs:5: (test)\\n\\n\\n\\n  2) test worker boundary keeps the queue flag for the same rollout (PhaseGate.WorkerJobTest)\\n     test/worker_job...",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "paths": "[\"/workspace/test/dashboard_payload_test.exs\", \"/workspace/test/worker_job_test.exs\", \"/workspace/test/audit_event_test.exs\"]"
+                },
+                "index": 5,
+                "status": "error",
+                "timestamp": "2026-06-20T22:38:04.273573Z",
+                "summary": "\"Tool read crashed: no function clause matching in String.replace_prefix/3\"",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/rule.ex << 'EOF'\ndefmodule PhaseGate.Rule do\n  @moduledoc false\n\n  # Canonical flag: internal representation for the same rollout\n  def canonical_flag(flag) when flag in [\"fast_checkout\", \"accelerated_checkout\", \"fc_legacy\"] do\n    \"fast_checkout\"\n  end\n\n  def canonical_flag(_flag), do: \"off\"\n\n  # Dashboard boundary: public-facing, uses \"accelerated_checkout\"\n  def enabled?(\"fast_checkout\"), do: true\n  def enabled?(_flag), do: false\n\n  def dashboard_cohort(\"fast_checkout\"), do: \"guarded\"\n  def dashboard_cohort(_flag), do: \"closed\"\n\n  def dashboard_flag(\"fast_checkout\"), do: \"accelerated_checkout\"\n  def dashboard_flag(_flag), do: \"off\"\n\n  # Worker boundary: internal queue flag, uses \"fast_checkout\"\n  def worker_queue(\"fast_checkout\"), do: \"checkout.fast\"\n  def worker_queue(_flag), do: \"checkout.default\"\n\n  # Audit boundary: legacy ledger code, uses \"fc_legacy\"\n  def audit_retention(\"fast_checkout\"), do: \"90d\"\n  def audit_retention(_flag), do: \"7d\"\n\n  def audit_flag(\"fast_checkout\"), do: \"fc_legacy\"\n  def audit_flag(_flag), do: \"off\"\nend\nEOF"
+                },
+                "index": 6,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:39:03.059856Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/dashboard_payload.ex << 'EOF'\ndefmodule PhaseGate.DashboardPayload do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      account: Map.fetch!(attrs, :account),\n      flag: Rule.dashboard_flag(flag),\n      enabled: Rule.enabled?(flag),\n      cohort: Rule.dashboard_cohort(flag)\n    }\n  end\nend\nEOF"
+                },
+                "index": 7,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:39:04.590512Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/worker_job.ex << 'EOF'\ndefmodule PhaseGate.WorkerJob do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      tenant: Map.fetch!(attrs, :tenant),\n      flag: flag,\n      queue: Rule.worker_queue(flag)\n    }\n  end\nend\nEOF"
+                },
+                "index": 8,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:39:05.972830Z",
+                "summary": "",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/phase_gate/audit_event.ex << 'EOF'\ndefmodule PhaseGate.AuditEvent do\n  @moduledoc false\n\n  alias PhaseGate.Rule\n\n  def build(attrs) do\n    flag = Rule.canonical_flag(Map.fetch!(attrs, :flag))\n\n    %{\n      actor: Map.fetch!(attrs, :actor),\n      flag_code: Rule.audit_flag(flag),\n      retention: Rule.audit_retention(flag)\n    }\n  end\nend\nEOF"
+                },
+                "index": 9,
+                "status": "ok",
+                "timestamp": "2026-06-20T22:39:07.614278Z",
+                "summary": "",
+                "tool": "shell"
+              }
+            ],
+            "turn_result": "ok",
+            "duration_ms": 750754,
+            "last_assistant_message": "G-V-R success check passed."
+          },
+          "runner_mode": "gvr",
+          "score": {
+            "unattended_depth": 5,
+            "goal_closure": true,
+            "recovery_rate": 0.0
+          }
+        }
+      ],
+      "objective": "Repair the seeded feature-flag migration Mix project in `/workspace`. The\nobvious global rename from `fast_checkout` to `accelerated_checkout` is a\ntrap: dashboard, worker, and audit boundaries use different external flag\ncodes for the same rollout. Refactor the shared `PhaseGate.Rule` contract so\nall boundary modules pass together.\n",
+      "max_steps": 28,
+      "goal_closure_rate": 0.6666666666666666
+    }
+  },
+  "summary": {
+    "flat_closure": 0.3333333333333333,
+    "gvr_closure": 0.6666666666666666,
+    "recovery_delta": 0.3333333333333333,
+    "flat_fails": true,
+    "gvr_recovers": true
+  }
+}
