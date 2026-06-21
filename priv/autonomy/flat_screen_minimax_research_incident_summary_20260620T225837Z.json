@@ -1,0 +1,120 @@
+{
+  "mode": "flat",
+  "provider": "openrouter",
+  "model_id": "minimax_m2_5",
+  "model": "minimax/minimax-m2.5",
+  "sample": {
+    "error": "nil",
+    "closed": true,
+    "status": "closed",
+    "depth": 9,
+    "score": {
+      "unattended_depth": 9,
+      "goal_closure": true,
+      "recovery_rate": 0.0
+    },
+    "runner_mode": "flat",
+    "duration_ms": 20796,
+    "turn_result": ":ok",
+    "last_assistant_message": "Goal completed. I analyzed the seeded evidence files and created `report/findings.txt` with the suspicious successful admin export request details:\n\n- **source_ip**: 203.0.113.42\n- **endpoint**: /admin/export\n- **token**: orchid-canary-17\n- **status**: 200\n\nThe acceptance check passed.",
+    "steps": [
+      {
+        "args": {
+          "path": "/workspace"
+        },
+        "index": 1,
+        "status": "ok",
+        "timestamp": "2026-06-20T22:58:44.916361Z",
+        "summary": "dir\tevidence",
+        "tool": "list"
+      },
+      {
+        "args": {
+          "path": "/workspace/evidence"
+        },
+        "index": 2,
+        "status": "ok",
+        "timestamp": "2026-06-20T22:58:46.218814Z",
+        "summary": "file\taccess.log\nfile\tnotes.md",
+        "tool": "list"
+      },
+      {
+        "args": {
+          "path": "/workspace/evidence/access.log"
+        },
+        "index": 3,
+        "status": "ok",
+        "timestamp": "2026-06-20T22:58:47.761739Z",
+        "summary": "2026-06-18T09:15:01Z source=198.51.100.10 method=GET path=/login status=200 token=none\n2026-06-18T09:16:44Z source=203.0.113.42 method=GET path=/admin/export status=200 token=orchid-canary-17 bytes=4812\n2026-06-18T09:17:02Z source=192.0.2.55 method=GET path=/admin/export status=403 token=invalid\n2026-06-18T09:18:11Z source=198.51.100.10 method=GET path=/logout status=204 token=none\n",
+        "tool": "read"
+      },
+      {
+        "args": {
+          "path": "/workspace/evidence/notes.md"
+        },
+        "index": 4,
+        "status": "ok",
+        "timestamp": "2026-06-20T22:58:47.832225Z",
+        "summary": "The report should identify the successful suspicious admin export request.\nIgnore failed requests and normal login/logout traffic.\n",
+        "tool": "read"
+      },
+      {
+        "args": {
+          "command": "mkdir -p /workspace/report"
+        },
+        "index": 5,
+        "status": "ok",
+        "timestamp": "2026-06-20T22:58:51.290470Z",
+        "summary": "",
+        "tool": "shell"
+      },
+      {
+        "args": {
+          "command": "cat > /workspace/report/findings.txt << 'EOF'\nsource_ip: 203.0.113.42\nendpoint: /admin/export\ntoken: orchid-canary-17\nstatus: 200\nEOF"
+        },
+        "index": 6,
+        "status": "ok",
+        "timestamp": "2026-06-20T22:58:53.488765Z",
+        "summary": "",
+        "tool": "shell"
+      },
+      {
+        "args": {
+          "path": "/workspace/report/findings.txt"
+        },
+        "index": 7,
+        "status": "ok",
+        "timestamp": "2026-06-20T22:58:54.611560Z",
+        "summary": "source_ip: 203.0.113.42\nendpoint: /admin/export\ntoken: orchid-canary-17\nstatus: 200\n",
+        "tool": "read"
+      },
+      {
+        "args": {
+          "command": "cd /workspace && test -f report/findings.txt && grep -Eq 'source_ip:[[:space:]]*203\\.0\\.113\\.42' report/findings.txt && grep -Eq 'endpoint:[[:space:]]*/admin/export' report/findings.txt && grep -Eq 'token:[[:space:]]*orchid-canary-17' report/findings.txt && grep -Eq 'status:[[:space:]]*200' report/findings.txt && echo \"CHECK PASSED\""
+        },
+        "index": 8,
+        "status": "ok",
+        "timestamp": "2026-06-20T22:58:56.901085Z",
+        "summary": "CHECK PASSED\n",
+        "tool": "shell"
+      },
+      {
+        "args": {
+          "outcome": "success",
+          "summary": "Analyzed evidence files, identified the suspicious successful admin export request (source_ip: 203.0.113.42, endpoint: /admin/export, token: orchid-canary-17, status: 200), and created report/findings.txt. Acceptance check passed."
+        },
+        "index": 9,
+        "status": "ok",
+        "timestamp": "2026-06-20T22:58:58.549338Z",
+        "summary": "Reported success for goal \"Autonomy benchmark: research_incident_summary\" [9OQ57EegN1FZ5efN]",
+        "tool": "task_report_result"
+      }
+    ]
+  },
+  "benchmark": "research_incident_summary",
+  "harness": "flat_minimax_screen",
+  "generated_at": "2026-06-20T22:59:13.559445Z",
+  "runs": 1,
+  "goal_closure_rate": 1.0,
+  "flat_fails": false
+}
