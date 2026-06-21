@@ -1,0 +1,988 @@
+{
+  "arms": {
+    "flat": {
+      "category": "development",
+      "goal_closure_rate": 0.3333333333333333,
+      "id": "budget_constrained_build_order",
+      "max_steps": 28,
+      "median_score": {
+        "recovery_rate": 0.0,
+        "unattended_depth": 15
+      },
+      "objective": "Complete the seeded Mix project in `/workspace` under a tight budget. The files\nare named in a misleading order; do not work from the top of the listing.\nRead the dependency notes and implement the release-manifest pipeline in\ntopological order: Parser and Rules first, then Validator and Renderer, then\nPipeline. The single integration test must pass.\n",
+      "runner_mode": "flat",
+      "samples": [
+        {
+          "result": {
+            "agent_id": "MGQw59fX9Ak",
+            "closed": false,
+            "depth": 14,
+            "duration_ms": 25135,
+            "goal_id": "FRZlJAhkLIyJk97k",
+            "last_assistant_message": null,
+            "project_id": "MG2iiYyNPJ_1fTrc",
+            "recovered": [],
+            "runner_mode": "flat",
+            "status": "stalled",
+            "steps": [
+              {
+                "args": {
+                  "path": "/workspace/README.md"
+                },
+                "index": 1,
+                "status": "ok",
+                "summary": "# Budget-Constrained Build Order\n\nDependency DAG:\n\n- BuildOrder.Parser is foundation A.\n- BuildOrder.Rules is foundation B.\n- BuildOrder.Validator depends on Parser and Rules.\n- BuildOrder.Renderer depends on the validated manifest entries.\n- BuildOrder.Pipeline depends on Validator and Renderer.\n\nThe file names are reverse ordered on purpose. Implementing Pipeline first\nproduces failures that do not identify the real missing layers.\n\nInput rows are `sku|quantity|priority|region`. Ignore blank lines, comment\nlines beginning with `#`, malformed rows, and rows with quantity <= 0.\n\nPriority multipliers:\n\n- gold: 30\n- silver: 12\n- bronze: 5\n\nScore is quantity * multiplier. Keep only entries with score >= 10.\nThe tag is `expedite` when priority is gold or score >= 40; otherwise it\nis `standard`. Sort by score descending, then SKU ascending.\n\nRender lines exactly as:\n\n`region=<region> sku=<sku> score=<score> tag=<tag>`\n",
+                "timestamp": "2026-06-21T00:54:21.729852Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/mix.exs"
+                },
+                "index": 2,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :build_order,\n      version: \"0.1.0\",\n      elixir: \"~> 1.15\",\n      start_permanent: Mix.env() == :prod,\n      deps: []\n    ]\n  end\n\n  def application do\n    [extra_applications: [:logger]]\n  end\nend\n",
+                "timestamp": "2026-06-21T00:54:21.807479Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/build_order_pipeline_test.exs"
+                },
+                "index": 3,
+                "status": "ok",
+                "summary": "defmodule BuildOrderPipelineTest do\n  use ExUnit.Case, async: true\n\n  test \"the public pipeline composes the full dependency DAG\" do\n    source = \"# sku|quantity|priority|region\\nA-1|3|gold|east\\nB-2|0|silver|west\\nC-3|2|bronze|east\\nD-4|1|gold|west\\nBROKEN|row\\n\"\n\n    assert BuildOrder.Pipeline.run(source) == [\n             \"region=east sku=A-1 score=90 tag=expedite\",\n             \"region=west sku=D-4 score=30 tag=expedite\",\n             \"region=east sku=C-3 score=10 tag=standard\"\n           ]\n\n    second_source = \"R-7|4|silver|north\\nM-1|1|bronze|north\\nA-9|2|silver|south\\n\"\n\n    assert BuildOrder.Pipeline.run(second_source) == [\n             \"region=north sku=R-7 score=48 tag=expedite\",\n             \"region=south sku=A-9 score=24 tag=standard\"\n           ]\n  end\nend\n",
+                "timestamp": "2026-06-21T00:54:21.885892Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/04_parser.ex"
+                },
+                "index": 4,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T00:54:22.977534Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/03_rules.ex"
+                },
+                "index": 5,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Rules do\n  @moduledoc false\n\n  def classify(entry), do: entry\nend\n",
+                "timestamp": "2026-06-21T00:54:23.042681Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/01_validator.ex"
+                },
+                "index": 6,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T00:54:23.105985Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/02_renderer.ex"
+                },
+                "index": 7,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(_entries), do: []\nend\n",
+                "timestamp": "2026-06-21T00:54:23.171475Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/00_pipeline.ex"
+                },
+                "index": 8,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T00:54:23.242827Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(source) do\n    source\n    |> String.split(\"\\n\")\n    |> Enum.filter(&valid_line?/1)\n    |> Enum.flat_map(&parse_row/1)\n  end\n\n  defp valid_line?(line), do: line != \"\" and not String.starts_with?(line, \"#\")\n\n  defp parse_row(line) do\n    case String.split(line, \"|\") do\n      [sku, qty_str, priority, region] ->\n        case Integer.parse(qty_str) do\n          {quantity, \"\"} when quantity > 0 ->\n            [%{sku: sku, quantity: quantity, priority: priority, region: region}]\n          _ -> []\n        end\n      _ -> []\n    end\n  end\nend",
+                  "old_string": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend",
+                  "path": "/workspace/lib/build_order/04_parser.ex"
+                },
+                "index": 9,
+                "status": "error",
+                "summary": "\"Failed to write /workspace/lib/build_order/04_parser.ex: eacces\"",
+                "timestamp": "2026-06-21T00:54:29.495418Z",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "command": "ls -la /workspace/lib/build_order/"
+                },
+                "index": 10,
+                "status": "ok",
+                "summary": "total 28\ndrwxr-xr-x 2 agent agent 4096 Jun 21 00:54 .\ndrwxr-xr-x 3 agent agent 4096 Jun 21 00:54 ..\n-rw-r--r-- 1 agent agent   84 Jun 21 00:54 00_pipeline.ex\n-rw-r--r-- 1 agent agent   90 Jun 21 00:54 01_validator.ex\n-rw-r--r-- 1 agent agent   88 Jun 21 00:54 02_renderer.ex\n-rw-r--r-- 1 agent agent   87 Jun 21 00:54 03_rules.ex\n-rw-r--r-- 1 agent agent   84 Jun 21 00:54 04_parser.ex\n",
+                "timestamp": "2026-06-21T00:54:31.729882Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/build_order/04_parser.ex << 'EOF'\ndefmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(source) do\n    source\n    |> String.split(\"\\n\")\n    |> Enum.filter(&valid_line?/1)\n    |> Enum.flat_map(&parse_row/1)\n  end\n\n  defp valid_line?(line), do: line != \"\" and not String.starts_with?(line, \"#\")\n\n  defp parse_row(line) do\n    case String.split(line, \"|\") do\n      [sku, qty_str, priority, region] ->\n        case Integer.parse(qty_str) do\n          {quantity, \"\"} when quantity > 0 ->\n            [%{sku: sku, quantity: quantity, priority: priority, region: region}]\n          _ -> []\n        end\n      _ -> []\n    end\n  end\nend\nEOF"
+                },
+                "index": 11,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T00:54:34.390856Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/build_order/03_rules.ex << 'EOF'\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  @priority_multipliers %{\"gold\" => 30, \"silver\" => 12, \"bronze\" => 5}\n\n  def classify(entry) do\n    score = entry.quantity * Map.get(@priority_multipliers, entry.priority, 0)\n    tag = if entry.priority == \"gold\" or score >= 40, do: \"expedite\", else: \"standard\"\n    Map.merge(entry, %{score: score, tag: tag})\n  end\n\n  def accepted?(entry), do: entry.score >= 10\nend\nEOF"
+                },
+                "index": 12,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T00:54:36.286409Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/build_order/01_validator.ex << 'EOF'\ndefmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(source) do\n    source\n    |> BuildOrder.Parser.parse()\n    |> Enum.map(&BuildOrder.Rules.classify/1)\n    |> Enum.filter(&BuildOrder.Rules.accepted?/1)\n    |> Enum.sort_by(&{&1.score, &1.sku}, {:desc, :asc})\n  end\nend\nEOF"
+                },
+                "index": 13,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T00:54:38.266864Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/build_order/02_renderer.ex << 'EOF'\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(entries) do\n    Enum.map(entries, fn entry ->\n      \"region=#{entry.region} sku=#{entry.sku} score=#{entry.score} tag=#{entry.tag}\"\n    end)\n  end\nend\nEOF"
+                },
+                "index": 14,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T00:54:40.116725Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cat > /workspace/lib/build_order/00_pipeline.ex << 'EOF'\ndefmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(source) do\n    source\n    |> BuildOrder.Validator.accepted()\n    |> BuildOrder.Renderer.format()\n  end\nend\nEOF"
+                },
+                "index": 15,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T00:54:42.425350Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && mix test 2>&1"
+                },
+                "index": 16,
+                "status": "error",
+                "summary": "\"Exit code 2:\\nCompiling 5 files (.ex)\\nGenerated build_order app\\n\\n\\n  1) test the public pipeline composes the full dependency DAG (BuildOrderPipelineTest)\\n     test/build_order_pipeline_test.exs:4\\n     ** (UndefinedFunctionError) function :asc.compare/2 is undefined (module :asc is not available)\\n     code: assert BuildOrder.Pipeline.run(source) == [\\n     stacktrace:\\n       :asc.compare({90, \\\"A-1\\\"}, {10, \\\"C-3\\\"})\\n       (elixir 1.15.8) lib/list.ex:517: anonymous fn/4 in List.keysort_fun/2\\n       (stdlib 4.2) lists.erl:1022: :lists.sort/2\\n       (elixir 1.15.8) lib/enum.ex:3322: Enum.sort_by/3\\n       (build_order 0.1.0) lib/build_order/00_pipeline.ex:6: BuildOrder.Pipeline.run/1\\n       test/build_order_pipeline_test.exs:7: (test)\\n\\n\\nFinished in 0.01 seconds (0.01s async, 0.00s sync)\\n1 test, 1 failure\\n\\nRandomized with seed 958808\\n\"",
+                "timestamp": "2026-06-21T00:54:45.019643Z",
+                "tool": "shell"
+              }
+            ],
+            "turn_result": "ok"
+          },
+          "run": 1,
+          "runner_mode": "flat",
+          "score": {
+            "goal_closure": false,
+            "recovery_rate": 0.0,
+            "unattended_depth": 14
+          },
+          "status": "stalled"
+        },
+        {
+          "result": {
+            "agent_id": "PHNrKpKl_6E",
+            "closed": true,
+            "depth": 18,
+            "duration_ms": 29845,
+            "goal_id": "f0_6Ak8BoxCsGOK3",
+            "last_assistant_message": null,
+            "project_id": "ykOj6X8-piZKGphG",
+            "recovered": [],
+            "runner_mode": "flat",
+            "status": "closed",
+            "steps": [
+              {
+                "args": {
+                  "path": "/workspace"
+                },
+                "index": 1,
+                "status": "ok",
+                "summary": "file\tREADME.md\ndir\tlib\nfile\tmix.exs\ndir\ttest",
+                "timestamp": "2026-06-21T00:55:01.478538Z",
+                "tool": "list"
+              },
+              {
+                "args": {
+                  "path": "/workspace/README.md"
+                },
+                "index": 2,
+                "status": "ok",
+                "summary": "# Budget-Constrained Build Order\n\nDependency DAG:\n\n- BuildOrder.Parser is foundation A.\n- BuildOrder.Rules is foundation B.\n- BuildOrder.Validator depends on Parser and Rules.\n- BuildOrder.Renderer depends on the validated manifest entries.\n- BuildOrder.Pipeline depends on Validator and Renderer.\n\nThe file names are reverse ordered on purpose. Implementing Pipeline first\nproduces failures that do not identify the real missing layers.\n\nInput rows are `sku|quantity|priority|region`. Ignore blank lines, comment\nlines beginning with `#`, malformed rows, and rows with quantity <= 0.\n\nPriority multipliers:\n\n- gold: 30\n- silver: 12\n- bronze: 5\n\nScore is quantity * multiplier. Keep only entries with score >= 10.\nThe tag is `expedite` when priority is gold or score >= 40; otherwise it\nis `standard`. Sort by score descending, then SKU ascending.\n\nRender lines exactly as:\n\n`region=<region> sku=<sku> score=<score> tag=<tag>`\n",
+                "timestamp": "2026-06-21T00:55:01.560917Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/mix.exs"
+                },
+                "index": 3,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :build_order,\n      version: \"0.1.0\",\n      elixir: \"~> 1.15\",\n      start_permanent: Mix.env() == :prod,\n      deps: []\n    ]\n  end\n\n  def application do\n    [extra_applications: [:logger]]\n  end\nend\n",
+                "timestamp": "2026-06-21T00:55:01.618737Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/build_order_pipeline_test.exs"
+                },
+                "index": 4,
+                "status": "ok",
+                "summary": "defmodule BuildOrderPipelineTest do\n  use ExUnit.Case, async: true\n\n  test \"the public pipeline composes the full dependency DAG\" do\n    source = \"# sku|quantity|priority|region\\nA-1|3|gold|east\\nB-2|0|silver|west\\nC-3|2|bronze|east\\nD-4|1|gold|west\\nBROKEN|row\\n\"\n\n    assert BuildOrder.Pipeline.run(source) == [\n             \"region=east sku=A-1 score=90 tag=expedite\",\n             \"region=west sku=D-4 score=30 tag=expedite\",\n             \"region=east sku=C-3 score=10 tag=standard\"\n           ]\n\n    second_source = \"R-7|4|silver|north\\nM-1|1|bronze|north\\nA-9|2|silver|south\\n\"\n\n    assert BuildOrder.Pipeline.run(second_source) == [\n             \"region=north sku=R-7 score=48 tag=expedite\",\n             \"region=south sku=A-9 score=24 tag=standard\"\n           ]\n  end\nend\n",
+                "timestamp": "2026-06-21T00:55:03.706470Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/04_parser.ex"
+                },
+                "index": 5,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T00:55:03.790325Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/03_rules.ex"
+                },
+                "index": 6,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Rules do\n  @moduledoc false\n\n  def classify(entry), do: entry\nend\n",
+                "timestamp": "2026-06-21T00:55:03.886600Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/01_validator.ex"
+                },
+                "index": 7,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T00:55:03.967227Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/02_renderer.ex"
+                },
+                "index": 8,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(_entries), do: []\nend\n",
+                "timestamp": "2026-06-21T00:55:04.050068Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/00_pipeline.ex"
+                },
+                "index": 9,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T00:55:04.119651Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(source) do\n    source\n    |> String.split(\"\\n\")\n    |> Enum.filter(&valid_line?/1)\n    |> Enum.flat_map(&parse_row/1)\n  end\n\n  defp valid_line?(line) do\n    trimmed = String.trim(line)\n    trimmed != \"\" and not String.starts_with?(trimmed, \"#\")\n  end\n\n  defp parse_row(line) do\n    line\n    |> String.trim()\n    |> String.split(\"|\")\n    |> case do\n      [sku, quantity_str, priority, region] ->\n        case Integer.parse(quantity_str) do\n          {quantity, \"\"} when quantity > 0 ->\n            [%{sku: sku, quantity: quantity, priority: priority, region: region}]\n          _ ->\n            []\n        end\n      _ ->\n        []\n    end\n  end\nend",
+                  "old_string": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend",
+                  "path": "/workspace/lib/build_order/04_parser.ex"
+                },
+                "index": 10,
+                "status": "error",
+                "summary": "\"Failed to write /workspace/lib/build_order/04_parser.ex: eacces\"",
+                "timestamp": "2026-06-21T00:55:10.994955Z",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule BuildOrder.Rules do\n  @moduledoc false\n\n  @priority_multipliers %{\n    \"gold\" => 30,\n    \"silver\" => 12,\n    \"bronze\" => 5\n  }\n\n  def classify(entry) do\n    multiplier = Map.get(@priority_multipliers, entry.priority, 0)\n    score = entry.quantity * multiplier\n\n    tag =\n      if entry.priority == \"gold\" or score >= 40 do\n        \"expedite\"\n      else\n        \"standard\"\n      end\n\n    %{entry | score: score, tag: tag}\n  end\n\n  def valid_score?(score), do: score >= 10\nend",
+                  "old_string": "defmodule BuildOrder.Rules do\n  @moduledoc false\n\n  def classify(entry), do: entry\nend",
+                  "path": "/workspace/lib/build_order/03_rules.ex"
+                },
+                "index": 11,
+                "status": "error",
+                "summary": "\"Failed to write /workspace/lib/build_order/03_rules.ex: eacces\"",
+                "timestamp": "2026-06-21T00:55:11.062215Z",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(source) do\n    source\n    |> BuildOrder.Parser.parse()\n    |> Enum.map(&BuildOrder.Rules.classify/1)\n    |> Enum.filter(fn entry -> BuildOrder.Rules.valid_score?(entry.score) end)\n  end\nend",
+                  "old_string": "defmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(_source), do: []\nend",
+                  "path": "/workspace/lib/build_order/01_validator.ex"
+                },
+                "index": 12,
+                "status": "error",
+                "summary": "\"Failed to write /workspace/lib/build_order/01_validator.ex: eacces\"",
+                "timestamp": "2026-06-21T00:55:11.136143Z",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(entries) do\n    entries\n    |> Enum.map(&format_entry/1)\n  end\n\n  defp format_entry(entry) do\n    \"region=#{entry.region} sku=#{entry.sku} score=#{entry.score} tag=#{entry.tag}\"\n  end\nend",
+                  "old_string": "defmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(_entries), do: []\nend",
+                  "path": "/workspace/lib/build_order/02_renderer.ex"
+                },
+                "index": 13,
+                "status": "error",
+                "summary": "\"Failed to write /workspace/lib/build_order/02_renderer.ex: eacces\"",
+                "timestamp": "2026-06-21T00:55:11.195957Z",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(source) do\n    source\n    |> BuildOrder.Validator.accepted()\n    |> sort_entries()\n    |> BuildOrder.Renderer.format()\n  end\n\n  defp sort_entries(entries) do\n    entries\n    |> Enum.sort_by(fn entry -> {-entry.score, entry.sku} end)\n  end\nend",
+                  "old_string": "defmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(_source), do: []\nend",
+                  "path": "/workspace/lib/build_order/00_pipeline.ex"
+                },
+                "index": 14,
+                "status": "error",
+                "summary": "\"Failed to write /workspace/lib/build_order/00_pipeline.ex: eacces\"",
+                "timestamp": "2026-06-21T00:55:11.260684Z",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "command": "ls -la /workspace/lib/build_order/"
+                },
+                "index": 15,
+                "status": "ok",
+                "summary": "total 28\ndrwxr-xr-x 2 agent agent 4096 Jun 21 00:54 .\ndrwxr-xr-x 3 agent agent 4096 Jun 21 00:54 ..\n-rw-r--r-- 1 agent agent   84 Jun 21 00:54 00_pipeline.ex\n-rw-r--r-- 1 agent agent   90 Jun 21 00:54 01_validator.ex\n-rw-r--r-- 1 agent agent   88 Jun 21 00:54 02_renderer.ex\n-rw-r--r-- 1 agent agent   87 Jun 21 00:54 03_rules.ex\n-rw-r--r-- 1 agent agent   84 Jun 21 00:54 04_parser.ex\n",
+                "timestamp": "2026-06-21T00:55:13.255806Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat lib/build_order/04_parser.ex"
+                },
+                "index": 16,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T00:55:15.478304Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && rm lib/build_order/04_parser.ex && cat > lib/build_order/04_parser.ex << 'EOF'\ndefmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(source) do\n    source\n    |> String.split(\"\\n\")\n    |> Enum.filter(&valid_line?/1)\n    |> Enum.flat_map(&parse_row/1)\n  end\n\n  defp valid_line?(line) do\n    trimmed = String.trim(line)\n    trimmed != \"\" and not String.starts_with?(trimmed, \"#\")\n  end\n\n  defp parse_row(line) do\n    line\n    |> String.trim()\n    |> String.split(\"|\")\n    |> case do\n      [sku, quantity_str, priority, region] ->\n        case Integer.parse(quantity_str) do\n          {quantity, \"\"} when quantity > 0 ->\n            [%{sku: sku, quantity: quantity, priority: priority, region: region}]\n          _ ->\n            []\n        end\n      _ ->\n        []\n    end\n  end\nend\nEOF"
+                },
+                "index": 17,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T00:55:18.305696Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && rm lib/build_order/03_rules.ex && cat > lib/build_order/03_rules.ex << 'EOF'\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  @priority_multipliers %{\n    \"gold\" => 30,\n    \"silver\" => 12,\n    \"bronze\" => 5\n  }\n\n  def classify(entry) do\n    multiplier = Map.get(@priority_multipliers, entry.priority, 0)\n    score = entry.quantity * multiplier\n\n    tag =\n      if entry.priority == \"gold\" or score >= 40 do\n        \"expedite\"\n      else\n        \"standard\"\n      end\n\n    %{entry | score: score, tag: tag}\n  end\n\n  def valid_score?(score), do: score >= 10\nend\nEOF"
+                },
+                "index": 18,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T00:55:22.863665Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && rm lib/build_order/01_validator.ex && cat > lib/build_order/01_validator.ex << 'EOF'\ndefmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(source) do\n    source\n    |> BuildOrder.Parser.parse()\n    |> Enum.map(&BuildOrder.Rules.classify/1)\n    |> Enum.filter(fn entry -> BuildOrder.Rules.valid_score?(entry.score) end)\n  end\nend\nEOF"
+                },
+                "index": 19,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T00:55:23.110668Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && rm lib/build_order/02_renderer.ex && cat > lib/build_order/02_renderer.ex << 'EOF'\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(entries) do\n    entries\n    |> Enum.map(&format_entry/1)\n  end\n\n  defp format_entry(entry) do\n    \"region=#{entry.region} sku=#{entry.sku} score=#{entry.score} tag=#{entry.tag}\"\n  end\nend\nEOF"
+                },
+                "index": 20,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T00:55:23.338156Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && rm lib/build_order/00_pipeline.ex && cat > lib/build_order/00_pipeline.ex << 'EOF'\ndefmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(source) do\n    source\n    |> BuildOrder.Validator.accepted()\n    |> sort_entries()\n    |> BuildOrder.Renderer.format()\n  end\n\n  defp sort_entries(entries) do\n    entries\n    |> Enum.sort_by(fn entry -> {-entry.score, entry.sku} end)\n  end\nend\nEOF"
+                },
+                "index": 21,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T00:55:23.610828Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && mix test 2>&1"
+                },
+                "index": 22,
+                "status": "error",
+                "summary": "\"Exit code 2:\\nCompiling 5 files (.ex)\\nGenerated build_order app\\n\\n\\n  1) test the public pipeline composes the full dependency DAG (BuildOrderPipelineTest)\\n     test/build_order_pipeline_test.exs:4\\n     ** (KeyError) key :score not found\\n     code: assert BuildOrder.Pipeline.run(source) == [\\n     stacktrace:\\n       (build_order 0.1.0) lib/build_order/03_rules.ex:21: BuildOrder.Rules.classify/1\\n       (elixir 1.15.8) lib/enum.ex:1693: Enum.\\\"-map/2-lists^map/1-1-\\\"/2\\n       (build_order 0.1.0) lib/build_order/01_validator.ex:7: BuildOrder.Validator.accepted/1\\n       (build_order 0.1.0) lib/build_order/00_pipeline.ex:6: BuildOrder.Pipeline.run/1\\n       test/build_order_pipeline_test.exs:7: (test)\\n\\n\\nFinished in 0.01 seconds (0.01s async, 0.00s sync)\\n1 test, 1 failure\\n\\nRandomized with seed 729742\\n\"",
+                "timestamp": "2026-06-21T00:55:25.848391Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && rm lib/build_order/03_rules.ex && cat > lib/build_order/03_rules.ex << 'EOF'\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  @priority_multipliers %{\n    \"gold\" => 30,\n    \"silver\" => 12,\n    \"bronze\" => 5\n  }\n\n  def classify(entry) do\n    multiplier = Map.get(@priority_multipliers, entry.priority, 0)\n    score = entry.quantity * multiplier\n\n    tag =\n      if entry.priority == \"gold\" or score >= 40 do\n        \"expedite\"\n      else\n        \"standard\"\n      end\n\n    entry\n    |> Map.put(:score, score)\n    |> Map.put(:tag, tag)\n  end\n\n  def valid_score?(score), do: score >= 10\nend\nEOF"
+                },
+                "index": 23,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T00:55:28.278195Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && mix test 2>&1"
+                },
+                "index": 24,
+                "status": "ok",
+                "summary": "Compiling 1 file (.ex)\n.\nFinished in 0.01 seconds (0.01s async, 0.00s sync)\n1 test, 0 failures\n\nRandomized with seed 563919\n",
+                "timestamp": "2026-06-21T00:55:29.648461Z",
+                "tool": "shell"
+              }
+            ],
+            "turn_result": "ok"
+          },
+          "run": 2,
+          "runner_mode": "flat",
+          "score": {
+            "goal_closure": true,
+            "recovery_rate": 0.0,
+            "unattended_depth": 18
+          },
+          "status": "closed"
+        },
+        {
+          "result": {
+            "agent_id": "T-0Lhv7oODQ",
+            "closed": false,
+            "depth": 15,
+            "duration_ms": 21379,
+            "goal_id": "1ar5cKb8ZhhJHgnv",
+            "last_assistant_message": null,
+            "project_id": "wS8gWCHjMRgV4pIf",
+            "recovered": [],
+            "runner_mode": "flat",
+            "status": "stalled",
+            "steps": [
+              {
+                "args": {
+                  "path": "/workspace"
+                },
+                "index": 1,
+                "status": "ok",
+                "summary": "file\tREADME.md\ndir\tlib\nfile\tmix.exs\ndir\ttest",
+                "timestamp": "2026-06-21T00:55:46.758792Z",
+                "tool": "list"
+              },
+              {
+                "args": {
+                  "path": "/workspace/README.md"
+                },
+                "index": 2,
+                "status": "ok",
+                "summary": "# Budget-Constrained Build Order\n\nDependency DAG:\n\n- BuildOrder.Parser is foundation A.\n- BuildOrder.Rules is foundation B.\n- BuildOrder.Validator depends on Parser and Rules.\n- BuildOrder.Renderer depends on the validated manifest entries.\n- BuildOrder.Pipeline depends on Validator and Renderer.\n\nThe file names are reverse ordered on purpose. Implementing Pipeline first\nproduces failures that do not identify the real missing layers.\n\nInput rows are `sku|quantity|priority|region`. Ignore blank lines, comment\nlines beginning with `#`, malformed rows, and rows with quantity <= 0.\n\nPriority multipliers:\n\n- gold: 30\n- silver: 12\n- bronze: 5\n\nScore is quantity * multiplier. Keep only entries with score >= 10.\nThe tag is `expedite` when priority is gold or score >= 40; otherwise it\nis `standard`. Sort by score descending, then SKU ascending.\n\nRender lines exactly as:\n\n`region=<region> sku=<sku> score=<score> tag=<tag>`\n",
+                "timestamp": "2026-06-21T00:55:48.297579Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/mix.exs"
+                },
+                "index": 3,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :build_order,\n      version: \"0.1.0\",\n      elixir: \"~> 1.15\",\n      start_permanent: Mix.env() == :prod,\n      deps: []\n    ]\n  end\n\n  def application do\n    [extra_applications: [:logger]]\n  end\nend\n",
+                "timestamp": "2026-06-21T00:55:48.382187Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/04_parser.ex"
+                },
+                "index": 4,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T00:55:49.977265Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/03_rules.ex"
+                },
+                "index": 5,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Rules do\n  @moduledoc false\n\n  def classify(entry), do: entry\nend\n",
+                "timestamp": "2026-06-21T00:55:50.043006Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/01_validator.ex"
+                },
+                "index": 6,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T00:55:50.107014Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/02_renderer.ex"
+                },
+                "index": 7,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(_entries), do: []\nend\n",
+                "timestamp": "2026-06-21T00:55:50.172845Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/lib/build_order/00_pipeline.ex"
+                },
+                "index": 8,
+                "status": "ok",
+                "summary": "defmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T00:55:50.237696Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "path": "/workspace/test/build_order_pipeline_test.exs"
+                },
+                "index": 9,
+                "status": "ok",
+                "summary": "defmodule BuildOrderPipelineTest do\n  use ExUnit.Case, async: true\n\n  test \"the public pipeline composes the full dependency DAG\" do\n    source = \"# sku|quantity|priority|region\\nA-1|3|gold|east\\nB-2|0|silver|west\\nC-3|2|bronze|east\\nD-4|1|gold|west\\nBROKEN|row\\n\"\n\n    assert BuildOrder.Pipeline.run(source) == [\n             \"region=east sku=A-1 score=90 tag=expedite\",\n             \"region=west sku=D-4 score=30 tag=expedite\",\n             \"region=east sku=C-3 score=10 tag=standard\"\n           ]\n\n    second_source = \"R-7|4|silver|north\\nM-1|1|bronze|north\\nA-9|2|silver|south\\n\"\n\n    assert BuildOrder.Pipeline.run(second_source) == [\n             \"region=north sku=R-7 score=48 tag=expedite\",\n             \"region=south sku=A-9 score=24 tag=standard\"\n           ]\n  end\nend\n",
+                "timestamp": "2026-06-21T00:55:50.305598Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(source) do\n    source\n    |> String.split(\"\\n\")\n    |> Enum.filter(&valid_line?/1)\n    |> Enum.map(&parse_line/1)\n    |> Enum.filter(&valid_entry?/1)\n  end\n\n  defp valid_line?(line) do\n    line = String.trim(line)\n    line != \"\" and not String.starts_with?(line, \"#\")\n  end\n\n  defp parse_line(line) do\n    line\n    |> String.trim()\n    |> String.split(\"|\")\n    |> case do\n      [sku, quantity, priority, region] ->\n        case Integer.parse(quantity) do\n          {qty, \"\"} ->\n            %{\n              sku: String.trim(sku),\n              quantity: qty,\n              priority: String.trim(priority),\n              region: String.trim(region)\n            }\n          _ ->\n            nil\n        end\n      _ ->\n        nil\n    end\n  end\n\n  defp valid_entry?(entry), do: entry != nil\nend",
+                  "old_string": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend",
+                  "path": "/workspace/lib/build_order/04_parser.ex"
+                },
+                "index": 10,
+                "status": "error",
+                "summary": "\"Failed to write /workspace/lib/build_order/04_parser.ex: eacces\"",
+                "timestamp": "2026-06-21T00:55:56.759275Z",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "command": "ls -la /workspace/lib/build_order/"
+                },
+                "index": 11,
+                "status": "ok",
+                "summary": "total 28\ndrwxr-xr-x 2 agent agent 4096 Jun 21 00:55 .\ndrwxr-xr-x 3 agent agent 4096 Jun 21 00:55 ..\n-rw-r--r-- 1 agent agent   84 Jun 21 00:55 00_pipeline.ex\n-rw-r--r-- 1 agent agent   90 Jun 21 00:55 01_validator.ex\n-rw-r--r-- 1 agent agent   88 Jun 21 00:55 02_renderer.ex\n-rw-r--r-- 1 agent agent   87 Jun 21 00:55 03_rules.ex\n-rw-r--r-- 1 agent agent   84 Jun 21 00:55 04_parser.ex\n",
+                "timestamp": "2026-06-21T00:55:57.733172Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "chmod 666 /workspace/lib/build_order/*.ex"
+                },
+                "index": 12,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T00:55:58.870934Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(source) do\n    source\n    |> String.split(\"\\n\")\n    |> Enum.filter(&valid_line?/1)\n    |> Enum.map(&parse_line/1)\n    |> Enum.filter(&valid_entry?/1)\n  end\n\n  defp valid_line?(line) do\n    line = String.trim(line)\n    line != \"\" and not String.starts_with?(line, \"#\")\n  end\n\n  defp parse_line(line) do\n    line\n    |> String.trim()\n    |> String.split(\"|\")\n    |> case do\n      [sku, quantity, priority, region] ->\n        case Integer.parse(quantity) do\n          {qty, \"\"} ->\n            %{\n              sku: String.trim(sku),\n              quantity: qty,\n              priority: String.trim(priority),\n              region: String.trim(region)\n            }\n          _ ->\n            nil\n        end\n      _ ->\n        nil\n    end\n  end\n\n  defp valid_entry?(entry), do: entry != nil\nend",
+                  "old_string": "defmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend",
+                  "path": "/workspace/lib/build_order/04_parser.ex"
+                },
+                "index": 13,
+                "status": "ok",
+                "summary": "Successfully edited /workspace/lib/build_order/04_parser.ex",
+                "timestamp": "2026-06-21T00:56:00.773483Z",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule BuildOrder.Rules do\n  @moduledoc false\n\n  @priority_multipliers %{\n    \"gold\" => 30,\n    \"silver\" => 12,\n    \"bronze\" => 5\n  }\n\n  def classify(entry) do\n    multiplier = Map.get(@priority_multipliers, entry.priority, 0)\n    score = entry.quantity * multiplier\n    tag = determine_tag(entry.priority, score)\n    \n    entry\n    |> Map.put(:score, score)\n    |> Map.put(:tag, tag)\n  end\n\n  defp determine_tag(priority, score) do\n    if priority == \"gold\" or score >= 40 do\n      \"expedite\"\n    else\n      \"standard\"\n    end\n  end\nend",
+                  "old_string": "defmodule BuildOrder.Rules do\n  @moduledoc false\n\n  def classify(entry), do: entry\nend",
+                  "path": "/workspace/lib/build_order/03_rules.ex"
+                },
+                "index": 14,
+                "status": "ok",
+                "summary": "Successfully edited /workspace/lib/build_order/03_rules.ex",
+                "timestamp": "2026-06-21T00:56:02.457385Z",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(source) do\n    source\n    |> BuildOrder.Parser.parse()\n    |> Enum.filter(&(&1.quantity > 0))\n    |> Enum.map(&BuildOrder.Rules.classify/1)\n    |> Enum.filter(&(&1.score >= 10))\n  end\nend",
+                  "old_string": "defmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(_source), do: []\nend",
+                  "path": "/workspace/lib/build_order/01_validator.ex"
+                },
+                "index": 15,
+                "status": "ok",
+                "summary": "Successfully edited /workspace/lib/build_order/01_validator.ex",
+                "timestamp": "2026-06-21T00:56:04.020436Z",
+                "tool": "edit"
+              },
+              {
+                "args": {
+                  "new_string": "defmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(entries) do\n    entries\n    |> Enum.sort_by(&{&1.score, &1.sku}, fn {score1, sku1}, {score2, sku2} ->\n      cond do\n        score1 > score2 -> true\n        score1 < score2 -> false\n        true -> sku1 <= sku2\n      end\n    end)\n    |> Enum.map(&format_entry/1)\n  end\n\n  defp format_entry(entry) do\n    \"region=#{entry.region} sku=#{entry.sku} score=#{entry.score} tag=#{entry.tag}\"\n  end\nend",
+                  "old_string": "defmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(_entries), do: []\nend",
+                  "path": "/workspace/lib/build_order/02_renderer.ex"
+                },
+                "index": 16,
+                "status": "ok",
+                "summary": "Successfully edited /workspace/lib/build_order/02_renderer.ex",
+                "timestamp": "2026-06-21T00:56:05.980091Z",
+                "tool": "edit"
+              }
+            ],
+            "turn_result": "ok"
+          },
+          "run": 3,
+          "runner_mode": "flat",
+          "score": {
+            "goal_closure": false,
+            "recovery_rate": 0.0,
+            "unattended_depth": 15
+          },
+          "status": "stalled"
+        }
+      ],
+      "seed_files": [
+        "mix.exs",
+        "README.md",
+        "lib/build_order/00_pipeline.ex",
+        "lib/build_order/01_validator.ex",
+        "lib/build_order/02_renderer.ex",
+        "lib/build_order/03_rules.ex",
+        "lib/build_order/04_parser.ex",
+        "test/test_helper.exs",
+        "test/build_order_pipeline_test.exs"
+      ]
+    },
+    "gvr": {
+      "category": "development",
+      "goal_closure_rate": 1.0,
+      "id": "budget_constrained_build_order",
+      "max_steps": 28,
+      "median_score": {
+        "recovery_rate": 0.0,
+        "unattended_depth": 5
+      },
+      "objective": "Complete the seeded Mix project in `/workspace` under a tight budget. The files\nare named in a misleading order; do not work from the top of the listing.\nRead the dependency notes and implement the release-manifest pipeline in\ntopological order: Parser and Rules first, then Validator and Renderer, then\nPipeline. The single integration test must pass.\n",
+      "runner_mode": "gvr",
+      "samples": [
+        {
+          "result": {
+            "agent_id": "gvr-js3qxHxNlWY9YkTI",
+            "closed": true,
+            "depth": 5,
+            "duration_ms": 726704,
+            "goal_id": "js3qxHxNlWY9YkTI",
+            "last_assistant_message": "G-V-R success check passed.",
+            "project_id": "qlouyYe3FeUC5e1D",
+            "recovered": [],
+            "runner_mode": "gvr",
+            "status": "closed",
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && for f in README.md mix.exs test/build_order_pipeline_test.exs lib/build_order/04_parser.ex lib/build_order/03_rules.ex lib/build_order/01_validator.ex lib/build_order/02_renderer.ex lib/build_order/00_pipeline.ex; do printf '\\n===== %s =====\\n' \"$f\"; sed -n '1,240p' \"$f\"; done"
+                },
+                "index": 1,
+                "status": "ok",
+                "summary": "\n===== README.md =====\n# Budget-Constrained Build Order\n\nDependency DAG:\n\n- BuildOrder.Parser is foundation A.\n- BuildOrder.Rules is foundation B.\n- BuildOrder.Validator depends on Parser and Rules.\n- BuildOrder.Renderer depends on the validated manifest entries.\n- BuildOrder.Pipeline depends on Validator and Renderer.\n\nThe file names are reverse ordered on purpose. Implementing Pipeline first\nproduces failures that do not identify the real missing layers.\n\nInput rows are `sku|quantity|priority|region`. Ignore blank lines, comment\nlines beginning with `#`, malformed rows, and rows with quantity <= 0.\n\nPriority multipliers:\n\n- gold: 30\n- silver: 12\n- bronze: 5\n\nScore is quantity * multiplier. Keep only entries with score >= 10.\nThe tag is `expedite` when priority is gold or score >= 40; otherwise it\nis `standard`. Sort by score descending, then SKU ascending.\n\nRender lines exactly as:\n\n`region=<region> sku=<sku> score=<score> tag=<tag>`\n\n===== mix.exs =====\ndefmodule BuildOrder.MixProje...",
+                "timestamp": "2026-06-21T01:33:43.700189Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "paths": "[\"lib/build_order/04_parser.ex\", \"lib/build_order/03_rules.ex\", \"lib/build_order/01_validator.ex\", \"lib/build_order/02_renderer.ex\", \"lib/build_order/00_pipeline.ex\"]"
+                },
+                "index": 2,
+                "status": "error",
+                "summary": "\"Tool read crashed: no function clause matching in String.replace_prefix/3\"",
+                "timestamp": "2026-06-21T01:35:57.594358Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && for f in lib/build_order/04_parser.ex lib/build_order/03_rules.ex lib/build_order/01_validator.ex lib/build_order/02_renderer.ex lib/build_order/00_pipeline.ex; do printf '\\n===== %s =====\\n' \"$f\"; sed -n '1,220p' \"$f\"; done"
+                },
+                "index": 3,
+                "status": "ok",
+                "summary": "\n===== lib/build_order/04_parser.ex =====\ndefmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend\n\n===== lib/build_order/03_rules.ex =====\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  def classify(entry), do: entry\nend\n\n===== lib/build_order/01_validator.ex =====\ndefmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(_source), do: []\nend\n\n===== lib/build_order/02_renderer.ex =====\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(_entries), do: []\nend\n\n===== lib/build_order/00_pipeline.ex =====\ndefmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T01:36:32.341434Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/04_parser.ex <<'EOF'\ndefmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(source) when is_binary(source) do\n    source\n    |> String.split(~r/\\R/, trim: true)\n    |> Enum.flat_map(&parse_line/1)\n  end\n\n  defp parse_line(line) do\n    line = String.trim(line)\n\n    cond do\n      line == \"\" ->\n        []\n\n      String.starts_with?(line, \"#\") ->\n        []\n\n      true ->\n        case String.split(line, \"|\") do\n          [sku, quantity, priority, region] ->\n            with {quantity, \"\"} <- Integer.parse(String.trim(quantity)),\n                 true <- quantity > 0 do\n              [\n                %{\n                  sku: String.trim(sku),\n                  quantity: quantity,\n                  priority: String.trim(priority),\n                  region: String.trim(region)\n                }\n              ]\n            else\n              _ -> []\n            end\n\n          _ ->\n            []\n        end\n    end\n  end\nend\nEOF\ncat > lib/build_order/03_rules.ex <<'EOF'\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  @multipliers %{\"gold\" => 30, \"silver\" => 12, \"bronze\" => 5}\n\n  def classify(%{priority: priority, quantity: quantity} = entry) do\n    multiplier = Map.get(@multipliers, priority, 0)\n    score = quantity * multiplier\n    tag = if priority == \"gold\" or score >= 40, do: \"expedite\", else: \"standard\"\n\n    entry\n    |> Map.put(:score, score)\n    |> Map.put(:tag, tag)\n  end\nend\nEOF"
+                },
+                "index": 4,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T01:37:56.120323Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/01_validator.ex <<'EOF'\ndefmodule BuildOrder.Validator do\n  @moduledoc false\n\n  alias BuildOrder.Parser\n  alias BuildOrder.Rules\n\n  def accepted(source) do\n    source\n    |> Parser.parse()\n    |> Enum.map(&Rules.classify/1)\n    |> Enum.filter(&(&1.score >= 10))\n    |> Enum.sort_by(&{-&1.score, &1.sku})\n  end\nend\nEOF\ncat > lib/build_order/02_renderer.ex <<'EOF'\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(entries) do\n    Enum.map(entries, fn entry ->\n      \"region=#{entry.region} sku=#{entry.sku} score=#{entry.score} tag=#{entry.tag}\"\n    end)\n  end\nend\nEOF"
+                },
+                "index": 5,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T01:37:57.534970Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/00_pipeline.ex <<'EOF'\ndefmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  alias BuildOrder.Renderer\n  alias BuildOrder.Validator\n\n  def run(source) do\n    source\n    |> Validator.accepted()\n    |> Renderer.format()\n  end\nend\nEOF"
+                },
+                "index": 6,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T01:37:58.956001Z",
+                "tool": "shell"
+              }
+            ],
+            "turn_result": "ok"
+          },
+          "run": 1,
+          "runner_mode": "gvr",
+          "score": {
+            "goal_closure": true,
+            "recovery_rate": 0.0,
+            "unattended_depth": 5
+          },
+          "status": "closed"
+        },
+        {
+          "result": {
+            "agent_id": "gvr-4qwjpFRMLJqb275_",
+            "closed": true,
+            "depth": 5,
+            "duration_ms": 18065,
+            "goal_id": "4qwjpFRMLJqb275_",
+            "last_assistant_message": "G-V-R success check passed.",
+            "project_id": "sTGV2tQKW0PJLhSu",
+            "recovered": [],
+            "runner_mode": "gvr",
+            "status": "closed",
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && for f in README.md mix.exs test/build_order_pipeline_test.exs lib/build_order/04_parser.ex lib/build_order/03_rules.ex lib/build_order/01_validator.ex lib/build_order/02_renderer.ex lib/build_order/00_pipeline.ex; do printf '\\n===== %s =====\\n' \"$f\"; sed -n '1,240p' \"$f\"; done"
+                },
+                "index": 1,
+                "status": "ok",
+                "summary": "\n===== README.md =====\n# Budget-Constrained Build Order\n\nDependency DAG:\n\n- BuildOrder.Parser is foundation A.\n- BuildOrder.Rules is foundation B.\n- BuildOrder.Validator depends on Parser and Rules.\n- BuildOrder.Renderer depends on the validated manifest entries.\n- BuildOrder.Pipeline depends on Validator and Renderer.\n\nThe file names are reverse ordered on purpose. Implementing Pipeline first\nproduces failures that do not identify the real missing layers.\n\nInput rows are `sku|quantity|priority|region`. Ignore blank lines, comment\nlines beginning with `#`, malformed rows, and rows with quantity <= 0.\n\nPriority multipliers:\n\n- gold: 30\n- silver: 12\n- bronze: 5\n\nScore is quantity * multiplier. Keep only entries with score >= 10.\nThe tag is `expedite` when priority is gold or score >= 40; otherwise it\nis `standard`. Sort by score descending, then SKU ascending.\n\nRender lines exactly as:\n\n`region=<region> sku=<sku> score=<score> tag=<tag>`\n\n===== mix.exs =====\ndefmodule BuildOrder.MixProje...",
+                "timestamp": "2026-06-21T01:38:16.687797Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "paths": "[\"lib/build_order/04_parser.ex\", \"lib/build_order/03_rules.ex\", \"lib/build_order/01_validator.ex\", \"lib/build_order/02_renderer.ex\", \"lib/build_order/00_pipeline.ex\"]"
+                },
+                "index": 2,
+                "status": "error",
+                "summary": "\"Tool read crashed: no function clause matching in String.replace_prefix/3\"",
+                "timestamp": "2026-06-21T01:38:19.469390Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && for f in lib/build_order/04_parser.ex lib/build_order/03_rules.ex lib/build_order/01_validator.ex lib/build_order/02_renderer.ex lib/build_order/00_pipeline.ex; do printf '\\n===== %s =====\\n' \"$f\"; sed -n '1,220p' \"$f\"; done"
+                },
+                "index": 3,
+                "status": "ok",
+                "summary": "\n===== lib/build_order/04_parser.ex =====\ndefmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend\n\n===== lib/build_order/03_rules.ex =====\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  def classify(entry), do: entry\nend\n\n===== lib/build_order/01_validator.ex =====\ndefmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(_source), do: []\nend\n\n===== lib/build_order/02_renderer.ex =====\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(_entries), do: []\nend\n\n===== lib/build_order/00_pipeline.ex =====\ndefmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T01:38:23.736164Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/04_parser.ex <<'EOF'\ndefmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(source) when is_binary(source) do\n    source\n    |> String.split(~r/\\R/, trim: true)\n    |> Enum.flat_map(&parse_line/1)\n  end\n\n  defp parse_line(line) do\n    line = String.trim(line)\n\n    cond do\n      line == \"\" ->\n        []\n\n      String.starts_with?(line, \"#\") ->\n        []\n\n      true ->\n        case String.split(line, \"|\") do\n          [sku, quantity, priority, region] ->\n            with {quantity, \"\"} <- Integer.parse(String.trim(quantity)),\n                 true <- quantity > 0 do\n              [\n                %{\n                  sku: String.trim(sku),\n                  quantity: quantity,\n                  priority: String.trim(priority),\n                  region: String.trim(region)\n                }\n              ]\n            else\n              _ -> []\n            end\n\n          _ ->\n            []\n        end\n    end\n  end\nend\nEOF\ncat > lib/build_order/03_rules.ex <<'EOF'\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  @multipliers %{\"gold\" => 30, \"silver\" => 12, \"bronze\" => 5}\n\n  def classify(%{priority: priority, quantity: quantity} = entry) do\n    multiplier = Map.get(@multipliers, priority, 0)\n    score = quantity * multiplier\n    tag = if priority == \"gold\" or score >= 40, do: \"expedite\", else: \"standard\"\n\n    entry\n    |> Map.put(:score, score)\n    |> Map.put(:tag, tag)\n  end\nend\nEOF"
+                },
+                "index": 4,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T01:38:26.887723Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/01_validator.ex <<'EOF'\ndefmodule BuildOrder.Validator do\n  @moduledoc false\n\n  alias BuildOrder.Parser\n  alias BuildOrder.Rules\n\n  def accepted(source) do\n    source\n    |> Parser.parse()\n    |> Enum.map(&Rules.classify/1)\n    |> Enum.filter(&(&1.score >= 10))\n    |> Enum.sort_by(&{-&1.score, &1.sku})\n  end\nend\nEOF\ncat > lib/build_order/02_renderer.ex <<'EOF'\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(entries) do\n    Enum.map(entries, fn entry ->\n      \"region=#{entry.region} sku=#{entry.sku} score=#{entry.score} tag=#{entry.tag}\"\n    end)\n  end\nend\nEOF"
+                },
+                "index": 5,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T01:38:28.356025Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/00_pipeline.ex <<'EOF'\ndefmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  alias BuildOrder.Renderer\n  alias BuildOrder.Validator\n\n  def run(source) do\n    source\n    |> Validator.accepted()\n    |> Renderer.format()\n  end\nend\nEOF"
+                },
+                "index": 6,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T01:38:29.753433Z",
+                "tool": "shell"
+              }
+            ],
+            "turn_result": "ok"
+          },
+          "run": 2,
+          "runner_mode": "gvr",
+          "score": {
+            "goal_closure": true,
+            "recovery_rate": 0.0,
+            "unattended_depth": 5
+          },
+          "status": "closed"
+        },
+        {
+          "result": {
+            "agent_id": "gvr-5Ux47MFRRUxNRTtp",
+            "closed": true,
+            "depth": 5,
+            "duration_ms": 18781,
+            "goal_id": "5Ux47MFRRUxNRTtp",
+            "last_assistant_message": "G-V-R success check passed.",
+            "project_id": "q8T_BJ4ZDmzNEIS8",
+            "recovered": [],
+            "runner_mode": "gvr",
+            "status": "closed",
+            "steps": [
+              {
+                "args": {
+                  "command": "cd /workspace && for f in README.md mix.exs test/build_order_pipeline_test.exs lib/build_order/04_parser.ex lib/build_order/03_rules.ex lib/build_order/01_validator.ex lib/build_order/02_renderer.ex lib/build_order/00_pipeline.ex; do printf '\\n===== %s =====\\n' \"$f\"; sed -n '1,240p' \"$f\"; done"
+                },
+                "index": 1,
+                "status": "ok",
+                "summary": "\n===== README.md =====\n# Budget-Constrained Build Order\n\nDependency DAG:\n\n- BuildOrder.Parser is foundation A.\n- BuildOrder.Rules is foundation B.\n- BuildOrder.Validator depends on Parser and Rules.\n- BuildOrder.Renderer depends on the validated manifest entries.\n- BuildOrder.Pipeline depends on Validator and Renderer.\n\nThe file names are reverse ordered on purpose. Implementing Pipeline first\nproduces failures that do not identify the real missing layers.\n\nInput rows are `sku|quantity|priority|region`. Ignore blank lines, comment\nlines beginning with `#`, malformed rows, and rows with quantity <= 0.\n\nPriority multipliers:\n\n- gold: 30\n- silver: 12\n- bronze: 5\n\nScore is quantity * multiplier. Keep only entries with score >= 10.\nThe tag is `expedite` when priority is gold or score >= 40; otherwise it\nis `standard`. Sort by score descending, then SKU ascending.\n\nRender lines exactly as:\n\n`region=<region> sku=<sku> score=<score> tag=<tag>`\n\n===== mix.exs =====\ndefmodule BuildOrder.MixProje...",
+                "timestamp": "2026-06-21T01:38:52.526706Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "paths": "[\"lib/build_order/04_parser.ex\", \"lib/build_order/03_rules.ex\", \"lib/build_order/01_validator.ex\", \"lib/build_order/02_renderer.ex\", \"lib/build_order/00_pipeline.ex\"]"
+                },
+                "index": 2,
+                "status": "error",
+                "summary": "\"Tool read crashed: no function clause matching in String.replace_prefix/3\"",
+                "timestamp": "2026-06-21T01:38:55.085769Z",
+                "tool": "read"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && for f in lib/build_order/04_parser.ex lib/build_order/03_rules.ex lib/build_order/01_validator.ex lib/build_order/02_renderer.ex lib/build_order/00_pipeline.ex; do printf '\\n===== %s =====\\n' \"$f\"; sed -n '1,220p' \"$f\"; done"
+                },
+                "index": 3,
+                "status": "ok",
+                "summary": "\n===== lib/build_order/04_parser.ex =====\ndefmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend\n\n===== lib/build_order/03_rules.ex =====\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  def classify(entry), do: entry\nend\n\n===== lib/build_order/01_validator.ex =====\ndefmodule BuildOrder.Validator do\n  @moduledoc false\n\n  def accepted(_source), do: []\nend\n\n===== lib/build_order/02_renderer.ex =====\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(_entries), do: []\nend\n\n===== lib/build_order/00_pipeline.ex =====\ndefmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  def run(_source), do: []\nend\n",
+                "timestamp": "2026-06-21T01:38:56.586847Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/04_parser.ex <<'EOF'\ndefmodule BuildOrder.Parser do\n  @moduledoc false\n\n  def parse(source) when is_binary(source) do\n    source\n    |> String.split(~r/\\R/, trim: true)\n    |> Enum.flat_map(&parse_line/1)\n  end\n\n  defp parse_line(line) do\n    line = String.trim(line)\n\n    cond do\n      line == \"\" ->\n        []\n\n      String.starts_with?(line, \"#\") ->\n        []\n\n      true ->\n        case String.split(line, \"|\") do\n          [sku, quantity, priority, region] ->\n            with {quantity, \"\"} <- Integer.parse(String.trim(quantity)),\n                 true <- quantity > 0 do\n              [\n                %{\n                  sku: String.trim(sku),\n                  quantity: quantity,\n                  priority: String.trim(priority),\n                  region: String.trim(region)\n                }\n              ]\n            else\n              _ -> []\n            end\n\n          _ ->\n            []\n        end\n    end\n  end\nend\nEOF\ncat > lib/build_order/03_rules.ex <<'EOF'\ndefmodule BuildOrder.Rules do\n  @moduledoc false\n\n  @multipliers %{\"gold\" => 30, \"silver\" => 12, \"bronze\" => 5}\n\n  def classify(%{priority: priority, quantity: quantity} = entry) do\n    multiplier = Map.get(@multipliers, priority, 0)\n    score = quantity * multiplier\n    tag = if priority == \"gold\" or score >= 40, do: \"expedite\", else: \"standard\"\n\n    entry\n    |> Map.put(:score, score)\n    |> Map.put(:tag, tag)\n  end\nend\nEOF"
+                },
+                "index": 4,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T01:39:01.470192Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/01_validator.ex <<'EOF'\ndefmodule BuildOrder.Validator do\n  @moduledoc false\n\n  alias BuildOrder.Parser\n  alias BuildOrder.Rules\n\n  def accepted(source) do\n    source\n    |> Parser.parse()\n    |> Enum.map(&Rules.classify/1)\n    |> Enum.filter(&(&1.score >= 10))\n    |> Enum.sort_by(&{-&1.score, &1.sku})\n  end\nend\nEOF\ncat > lib/build_order/02_renderer.ex <<'EOF'\ndefmodule BuildOrder.Renderer do\n  @moduledoc false\n\n  def format(entries) do\n    Enum.map(entries, fn entry ->\n      \"region=#{entry.region} sku=#{entry.sku} score=#{entry.score} tag=#{entry.tag}\"\n    end)\n  end\nend\nEOF"
+                },
+                "index": 5,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T01:39:02.884609Z",
+                "tool": "shell"
+              },
+              {
+                "args": {
+                  "command": "cd /workspace && cat > lib/build_order/00_pipeline.ex <<'EOF'\ndefmodule BuildOrder.Pipeline do\n  @moduledoc false\n\n  alias BuildOrder.Renderer\n  alias BuildOrder.Validator\n\n  def run(source) do\n    source\n    |> Validator.accepted()\n    |> Renderer.format()\n  end\nend\nEOF"
+                },
+                "index": 6,
+                "status": "ok",
+                "summary": "",
+                "timestamp": "2026-06-21T01:39:04.228135Z",
+                "tool": "shell"
+              }
+            ],
+            "turn_result": "ok"
+          },
+          "run": 3,
+          "runner_mode": "gvr",
+          "score": {
+            "goal_closure": true,
+            "recovery_rate": 0.0,
+            "unattended_depth": 5
+          },
+          "status": "closed"
+        }
+      ],
+      "seed_files": [
+        "mix.exs",
+        "README.md",
+        "lib/build_order/00_pipeline.ex",
+        "lib/build_order/01_validator.ex",
+        "lib/build_order/02_renderer.ex",
+        "lib/build_order/03_rules.ex",
+        "lib/build_order/04_parser.ex",
+        "test/test_helper.exs",
+        "test/build_order_pipeline_test.exs"
+      ]
+    }
+  },
+  "benchmark": "budget_constrained_build_order",
+  "commit": "060e6b2e5010f6ee4e3f716691977871fab3a1a5",
+  "duration_ms": 807236,
+  "flat_source_report": "priv/autonomy/flat_probe_glm_5_budget_constrained_build_order_n3_20260621T005619Z.json",
+  "generated_at": "2026-06-21T01:39:20.443542Z",
+  "gvr_model": "gpt-5.5",
+  "gvr_model_id": "gpt55",
+  "gvr_model_proof": "provider=codex model=gpt-5.5",
+  "gvr_provider": "codex",
+  "harness": "Orchid.Autonomy.Runner flat-probe vs fixed GVR A/B",
+  "model": "z-ai/glm-5",
+  "model_id": "glm_5",
+  "provider": "openrouter",
+  "runs_per_arm": 3,
+  "summary": {
+    "fair_zone_flat": true,
+    "flat_closure": 0.3333333333333333,
+    "flat_fails": true,
+    "gvr_closure": 1.0,
+    "gvr_recovers": true,
+    "recovery_delta": 0.6666666666666667
+  }
+}

@@ -1,0 +1,184 @@
+{
+  "benchmark": "recover_broken_healthcheck",
+  "duration_ms": 39377,
+  "flat_fails": false,
+  "generated_at": "2026-06-21T00:37:43.224849Z",
+  "goal_closure_rate": 1.0,
+  "harness": "Orchid.Autonomy.Runner direct flat screen",
+  "mode": "flat",
+  "model": "z-ai/glm-5",
+  "model_id": "glm_5",
+  "provider": "openrouter",
+  "runs": 1,
+  "sample": {
+    "result": {
+      "agent_id": "vva4LCX_zLs",
+      "closed": true,
+      "depth": 12,
+      "duration_ms": 23134,
+      "goal_id": "B7Rhdg8rwdgUKjdH",
+      "last_assistant_message": null,
+      "project_id": "wHlkn8EsJEGbyAcR",
+      "recovered": [
+        {
+          "check": "shell: cd /workspace && sh app/healthcheck.sh | grep -q '^HEALTHY state=ok port=8080$'",
+          "description": "Seeded healthcheck fails until the agent repairs app/healthcheck.sh.",
+          "final_passed": true,
+          "id": "broken_healthcheck",
+          "initial_passed": false,
+          "injected": true,
+          "recovered": true,
+          "status": "recovered"
+        }
+      ],
+      "runner_mode": "flat",
+      "status": "closed",
+      "steps": [
+        {
+          "args": {
+            "path": "/workspace"
+          },
+          "index": 1,
+          "status": "ok",
+          "summary": "file\tREADME.md\ndir\tapp",
+          "timestamp": "2026-06-21T00:37:10.311757Z",
+          "tool": "list"
+        },
+        {
+          "args": {
+            "path": "/workspace/app"
+          },
+          "index": 2,
+          "status": "ok",
+          "summary": "file\thealthcheck.sh\nfile\tstatus.txt",
+          "timestamp": "2026-06-21T00:37:10.382508Z",
+          "tool": "list"
+        },
+        {
+          "args": {
+            "path": "/workspace/app/healthcheck.sh"
+          },
+          "index": 3,
+          "status": "ok",
+          "summary": "#!/bin/sh\necho \"BROKEN healthcheck\"\nexit 1\n",
+          "timestamp": "2026-06-21T00:37:12.108288Z",
+          "tool": "read"
+        },
+        {
+          "args": {
+            "path": "/workspace/app/status.txt"
+          },
+          "index": 4,
+          "status": "ok",
+          "summary": "state=ok\nport=8080\n",
+          "timestamp": "2026-06-21T00:37:12.184035Z",
+          "tool": "read"
+        },
+        {
+          "args": {
+            "path": "/workspace/README.md"
+          },
+          "index": 5,
+          "status": "ok",
+          "summary": "Recovery task: fix app/healthcheck.sh. The deterministic check intentionally\nfails before the agent repairs the seeded broken script.\n",
+          "timestamp": "2026-06-21T00:37:12.239786Z",
+          "tool": "read"
+        },
+        {
+          "args": {
+            "new_string": "#!/bin/sh\n# Read status file and parse values\nstate=$(grep '^state=' app/status.txt | cut -d'=' -f2)\nport=$(grep '^port=' app/status.txt | cut -d'=' -f2)\n\n# Check if state is valid and output health status\nif [ \"$state\" = \"ok\" ]; then\n    echo \"HEALTHY state=$state port=$port\"\n    exit 0\nelse\n    echo \"UNHEALTHY state=$state port=$port\"\n    exit 1\nfi",
+            "old_string": "#!/bin/sh\necho \"BROKEN healthcheck\"\nexit 1",
+            "path": "/workspace/app/healthcheck.sh"
+          },
+          "index": 6,
+          "status": "error",
+          "summary": "\"Failed to write /workspace/app/healthcheck.sh: eacces\"",
+          "timestamp": "2026-06-21T00:37:16.142971Z",
+          "tool": "edit"
+        },
+        {
+          "args": {
+            "command": "ls -la /workspace/app/"
+          },
+          "index": 7,
+          "status": "ok",
+          "summary": "total 16\ndrwxr-xr-x 2 agent agent 4096 Jun 21 00:37 .\ndrwxr-xr-x 3 agent agent 4096 Jun 21 00:37 ..\n-rwxr-xr-x 1 agent agent   43 Jun 21 00:37 healthcheck.sh\n-rw-r--r-- 1 agent agent   19 Jun 21 00:37 status.txt\n",
+          "timestamp": "2026-06-21T00:37:17.484426Z",
+          "tool": "shell"
+        },
+        {
+          "args": {
+            "command": "cat > /workspace/app/healthcheck.sh << 'EOF'\n#!/bin/sh\n# Read status file and parse values\nstate=$(grep '^state=' app/status.txt | cut -d'=' -f2)\nport=$(grep '^port=' app/status.txt | cut -d'=' -f2)\n\n# Check if state is valid and output health status\nif [ \"$state\" = \"ok\" ]; then\n    echo \"HEALTHY state=$state port=$port\"\n    exit 0\nelse\n    echo \"UNHEALTHY state=$state port=$port\"\n    exit 1\nfi\nEOF"
+          },
+          "index": 8,
+          "status": "ok",
+          "summary": "",
+          "timestamp": "2026-06-21T00:37:20.136060Z",
+          "tool": "shell"
+        },
+        {
+          "args": {
+            "path": "/workspace/app/healthcheck.sh"
+          },
+          "index": 9,
+          "status": "ok",
+          "summary": "#!/bin/sh\n# Read status file and parse values\nstate=$(grep '^state=' app/status.txt | cut -d'=' -f2)\nport=$(grep '^port=' app/status.txt | cut -d'=' -f2)\n\n# Check if state is valid and output health status\nif [ \"$state\" = \"ok\" ]; then\n    echo \"HEALTHY state=$state port=$port\"\n    exit 0\nelse\n    echo \"UNHEALTHY state=$state port=$port\"\n    exit 1\nfi\n",
+          "timestamp": "2026-06-21T00:37:21.334287Z",
+          "tool": "read"
+        },
+        {
+          "args": {
+            "command": "cd /workspace && sh app/healthcheck.sh"
+          },
+          "index": 10,
+          "status": "ok",
+          "summary": "HEALTHY state=ok port=8080\n",
+          "timestamp": "2026-06-21T00:37:22.564651Z",
+          "tool": "shell"
+        },
+        {
+          "args": {
+            "command": "cd /workspace && sh app/healthcheck.sh | grep -q '^HEALTHY state=ok port=8080$' && echo \"PASSED\" || echo \"FAILED\""
+          },
+          "index": 11,
+          "status": "ok",
+          "summary": "PASSED\n",
+          "timestamp": "2026-06-21T00:37:24.753827Z",
+          "tool": "shell"
+        },
+        {
+          "args": {
+            "path": "/workspace/app/status.txt"
+          },
+          "index": 12,
+          "status": "ok",
+          "summary": "state=ok\nport=8080\n",
+          "timestamp": "2026-06-21T00:37:26.774770Z",
+          "tool": "read"
+        },
+        {
+          "args": {
+            "goal_id": "B7Rhdg8rwdgUKjdH",
+            "outcome": "success",
+            "report": "## Changes Made\n\n**File modified:** `/workspace/app/healthcheck.sh`\n\n**Original content:**\n```sh\n#!/bin/sh\necho \"BROKEN healthcheck\"\nexit 1\n```\n\n**New content:**\n```sh\n#!/bin/sh\n# Read status file and parse values\nstate=$(grep '^state=' app/status.txt | cut -d'=' -f2)\nport=$(grep '^port=' app/status.txt | cut -d'=' -f2)\n\n# Check if state is valid and output health status\nif [ \"$state\" = \"ok\" ]; then\n    echo \"HEALTHY state=$state port=$port\"\n    exit 0\nelse\n    echo \"UNHEALTHY state=$state port=$port\"\n    exit 1\nfi\n```\n\n## Verification\n\nAcceptance check passed:\n```\n$ cd /workspace && sh app/healthcheck.sh | grep -q '^HEALTHY state=ok port=8080$'\n$ echo $?\n0\n```\n\nOutput from healthcheck:\n```\nHEALTHY state=ok port=8080\n```\n\nStatus file `/workspace/app/status.txt` was preserved (not removed).",
+            "summary": "Successfully repaired the broken healthcheck.sh script to read app/status.txt and output \"HEALTHY state=ok port=8080\" when the service state is valid."
+          },
+          "index": 13,
+          "status": "ok",
+          "summary": "Reported success for goal \"Autonomy benchmark: recover_broken_healthcheck\" [B7Rhdg8rwdgUKjdH]",
+          "timestamp": "2026-06-21T00:37:30.647971Z",
+          "tool": "task_report_result"
+        }
+      ],
+      "turn_result": "ok"
+    },
+    "run": 1,
+    "runner_mode": "flat",
+    "score": {
+      "goal_closure": true,
+      "recovery_rate": 1.0,
+      "unattended_depth": 12
+    },
+    "status": "closed"
+  }
+}

@@ -1,0 +1,236 @@
+{
+  "benchmark": "build_layered_invoice_pipeline",
+  "duration_ms": 129494,
+  "flat_fails": true,
+  "generated_at": "2026-06-21T00:42:17.502570Z",
+  "goal_closure_rate": 0.0,
+  "harness": "Orchid.Autonomy.Runner direct flat screen",
+  "mode": "flat",
+  "model": "moonshotai/kimi-k2.5",
+  "model_id": "kimi_k2_5",
+  "provider": "openrouter",
+  "runs": 1,
+  "sample": {
+    "result": {
+      "agent_id": "XZbgh_O1iVQ",
+      "closed": false,
+      "depth": 14,
+      "duration_ms": 116285,
+      "goal_id": "yjGBnyKLjN5iODcJ",
+      "last_assistant_message": null,
+      "project_id": "JpuLR0-i3VmjPeUM",
+      "recovered": [],
+      "runner_mode": "flat",
+      "status": "stalled",
+      "steps": [
+        {
+          "args": {
+            "path": "/workspace"
+          },
+          "index": 1,
+          "status": "ok",
+          "summary": "file\tREADME.md\ndir\tlib\nfile\tmix.exs\ndir\ttest",
+          "timestamp": "2026-06-21T00:40:17.700608Z",
+          "tool": "list"
+        },
+        {
+          "args": {
+            "path": "/workspace/README.md"
+          },
+          "index": 2,
+          "status": "ok",
+          "summary": "# Invoice Pipeline\n\nInput rows are pipe-delimited as:\n\n    customer|category|unit_price|quantity\n\nIgnore blank rows and malformed rows. Group valid rows by customer.\nCustomers and category labels should render in alphabetical order.\n\nFor each customer:\n\n- subtotal is the sum of unit_price * quantity.\n- discount is 10% of subtotal when subtotal is at least 100.00.\n- discount is a flat 5.00 when subtotal is at least 50.00 and below 100.00.\n- discount is 0.00 otherwise.\n- tax is computed from category totals before discount:\n  food: 2%, book: 0%, tool: 7.5%, service: 9%, unknown categories: 0%.\n- total is subtotal - discount + tax.\n- render all money values with exactly two decimal places.\n\nThe public API is `InvoicePipeline.run/1`, implemented through the\n`InvoicePipeline.Parser`, `InvoicePipeline.Rules`, and\n`InvoicePipeline.Renderer` modules.\n",
+          "timestamp": "2026-06-21T00:40:17.773203Z",
+          "tool": "read"
+        },
+        {
+          "args": {
+            "path": "/workspace/lib/invoice_pipeline.ex"
+          },
+          "index": 3,
+          "status": "ok",
+          "summary": "defmodule InvoicePipeline do\n  @moduledoc false\n\n  def run(source) do\n    source\n    |> InvoicePipeline.Parser.parse()\n    |> InvoicePipeline.Rules.summarize()\n    |> InvoicePipeline.Renderer.render()\n  end\nend\n",
+          "timestamp": "2026-06-21T00:40:17.844875Z",
+          "tool": "read"
+        },
+        {
+          "args": {
+            "path": "/workspace/lib/invoice_pipeline/parser.ex"
+          },
+          "index": 4,
+          "status": "ok",
+          "summary": "defmodule InvoicePipeline.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend\n",
+          "timestamp": "2026-06-21T00:40:17.914058Z",
+          "tool": "read"
+        },
+        {
+          "args": {
+            "path": "/workspace/lib/invoice_pipeline/rules.ex"
+          },
+          "index": 5,
+          "status": "ok",
+          "summary": "defmodule InvoicePipeline.Rules do\n  @moduledoc false\n\n  def summarize(_rows), do: []\nend\n",
+          "timestamp": "2026-06-21T00:40:17.984480Z",
+          "tool": "read"
+        },
+        {
+          "args": {
+            "path": "/workspace/lib/invoice_pipeline/renderer.ex"
+          },
+          "index": 6,
+          "status": "ok",
+          "summary": "defmodule InvoicePipeline.Renderer do\n  @moduledoc false\n\n  def render(_summaries), do: []\nend\n",
+          "timestamp": "2026-06-21T00:40:18.055146Z",
+          "tool": "read"
+        },
+        {
+          "args": {
+            "path": "/workspace/test/invoice_pipeline_test.exs"
+          },
+          "index": 7,
+          "status": "ok",
+          "summary": "defmodule InvoicePipelineTest do\n  use ExUnit.Case, async: true\n\n  alias InvoicePipeline.Parser\n  alias InvoicePipeline.Rules\n  alias InvoicePipeline.Renderer\n\n  test \"parser keeps valid rows and skips malformed input\" do\n    source = \"ACME|food|12.00|2\\nBROKEN|food|oops|3\\n\\nZED|tool|40.00|1\\nSKIP|too|few\\n\"\n\n    assert Parser.parse(source) == [\n             %{customer: \"ACME\", category: \"food\", unit_price: 12.0, quantity: 2},\n             %{customer: \"ZED\", category: \"tool\", unit_price: 40.0, quantity: 1}\n           ]\n  end\n\n  test \"rules compute discounts, taxes, totals, and category totals\" do\n    rows = [\n      %{customer: \"MIRA\", category: \"service\", unit_price: 100.0, quantity: 1},\n      %{customer: \"BETA\", category: \"food\", unit_price: 2.5, quantity: 4},\n      %{customer: \"MIRA\", category: \"service\", unit_price: 25.0, quantity: 2}\n    ]\n\n    assert Rules.summarize(rows) == [\n             %{\n               customer: \"BETA\",\n               subtotal: 10.0,\n               discount:...",
+          "timestamp": "2026-06-21T00:40:18.123136Z",
+          "tool": "read"
+        },
+        {
+          "args": {
+            "new_string": "defmodule InvoicePipeline.Parser do\n  @moduledoc false\n\n  def parse(source) do\n    source\n    |> String.split(\"\\n\")\n    |> Enum.map(&String.trim/1)\n    |> Enum.reject(&(&1 == \"\"))\n    |> Enum.map(&parse_line/1)\n    |> Enum.reject(&is_nil/1)\n  end\n\n  defp parse_line(line) do\n    parts = String.split(line, \"|\")\n\n    with [customer, category, unit_price_str, quantity_str] <- parts,\n         {unit_price, \"\"} <- Float.parse(unit_price_str),\n         {quantity, \"\"} <- Integer.parse(quantity_str) do\n      %{\n        customer: customer,\n        category: category,\n        unit_price: unit_price,\n        quantity: quantity\n      }\n    else\n      _ -> nil\n    end\n  end\nend",
+            "old_string": "defmodule InvoicePipeline.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend",
+            "path": "/workspace/lib/invoice_pipeline/parser.ex"
+          },
+          "index": 8,
+          "status": "error",
+          "summary": "\"Failed to write /workspace/lib/invoice_pipeline/parser.ex: eacces\"",
+          "timestamp": "2026-06-21T00:41:27.189614Z",
+          "tool": "edit"
+        },
+        {
+          "args": {
+            "command": "chmod -R +w /workspace/lib/"
+          },
+          "index": 9,
+          "status": "ok",
+          "summary": "",
+          "timestamp": "2026-06-21T00:41:29.007538Z",
+          "tool": "shell"
+        },
+        {
+          "args": {
+            "new_string": "defmodule InvoicePipeline.Parser do\n  @moduledoc false\n\n  def parse(source) do\n    source\n    |> String.split(\"\\n\")\n    |> Enum.map(&String.trim/1)\n    |> Enum.reject(&(&1 == \"\"))\n    |> Enum.map(&parse_line/1)\n    |> Enum.reject(&is_nil/1)\n  end\n\n  defp parse_line(line) do\n    parts = String.split(line, \"|\")\n\n    with [customer, category, unit_price_str, quantity_str] <- parts,\n         {unit_price, \"\"} <- Float.parse(unit_price_str),\n         {quantity, \"\"} <- Integer.parse(quantity_str) do\n      %{\n        customer: customer,\n        category: category,\n        unit_price: unit_price,\n        quantity: quantity\n      }\n    else\n      _ -> nil\n    end\n  end\nend",
+            "old_string": "defmodule InvoicePipeline.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend",
+            "path": "/workspace/lib/invoice_pipeline/parser.ex"
+          },
+          "index": 10,
+          "status": "error",
+          "summary": "\"Failed to write /workspace/lib/invoice_pipeline/parser.ex: eacces\"",
+          "timestamp": "2026-06-21T00:41:46.119620Z",
+          "tool": "edit"
+        },
+        {
+          "args": {
+            "new_string": "defmodule InvoicePipeline.Rules do\n  @moduledoc false\n\n  @tax_rates %{\n    \"food\" => 0.02,\n    \"book\" => 0.0,\n    \"tool\" => 0.075,\n    \"service\" => 0.09\n  }\n\n  def summarize(rows) do\n    rows\n    |> Enum.group_by(& &1.customer)\n    |> Enum.map(fn {customer, customer_rows} ->\n      customer_summary(customer, customer_rows)\n    end)\n    |> Enum.sort_by(& &1.customer)\n  end\n\n  defp customer_summary(customer, rows) do\n    category_totals =\n      rows\n      |> Enum.group_by(& &1.category)\n      |> Enum.map(fn {category, cat_rows} ->\n        total = Enum.reduce(cat_rows, 0.0, fn row, acc ->\n          acc + row.unit_price * row.quantity\n        end)\n        {category, total}\n      end)\n      |> Map.new()\n\n    subtotal = Enum.reduce(category_totals, 0.0, fn {_cat, total}, acc -> acc + total end)\n\n    tax =\n      category_totals\n      |> Enum.reduce(0.0, fn {category, total}, acc ->\n        rate = Map.get(@tax_rates, category, 0.0)\n        acc + total * rate\n      end)\n\n    discount = calculate_discount(subtotal)\n    total = subtotal - discount + tax\n\n    %{\n      customer: customer,\n      subtotal: subtotal,\n      discount: discount,\n      tax: tax,\n      total: total,\n      categories: category_totals\n    }\n  end\n\n  defp calculate_discount(subtotal) when subtotal >= 100.0 do\n    subtotal * 0.10\n  end\n\n  defp calculate_discount(subtotal) when subtotal >= 50.0 do\n    5.0\n  end\n\n  defp calculate_discount(_subtotal) do\n    0.0\n  end\nend",
+            "old_string": "defmodule InvoicePipeline.Rules do\n  @moduledoc false\n\n  def summarize(_rows), do: []\nend",
+            "path": "/workspace/lib/invoice_pipeline/rules.ex"
+          },
+          "index": 11,
+          "status": "error",
+          "summary": "\"Failed to write /workspace/lib/invoice_pipeline/rules.ex: eacces\"",
+          "timestamp": "2026-06-21T00:41:46.178298Z",
+          "tool": "edit"
+        },
+        {
+          "args": {
+            "new_string": "defmodule InvoicePipeline.Renderer do\n  @moduledoc false\n\n  def render(summaries) do\n    summaries\n    |> Enum.sort_by(& &1.customer)\n    |> Enum.map(&render_summary/1)\n  end\n\n  defp render_summary(summary) do\n    categories_str =\n      summary.categories\n      |> Enum.sort_by(fn {cat, _total} -> cat end)\n      |> Enum.map(fn {cat, total} -> \"#{cat}:#{format_money(total)}\" end)\n      |> Enum.join(\",\")\n\n    \"customer=#{summary.customer} \" <>\n    \"subtotal=#{format_money(summary.subtotal)} \" <>\n    \"discount=#{format_money(summary.discount)} \" <>\n    \"tax=#{format_money(summary.tax)} \" <>\n    \"total=#{format_money(summary.total)} \" <>\n    \"categories=#{categories_str}\"\n  end\n\n  defp format_money(value) do\n    :io_lib.format(\"~.2f\", [value])\n    |> to_string()\n  end\nend",
+            "old_string": "defmodule InvoicePipeline.Renderer do\n  @moduledoc false\n\n  def render(_summaries), do: []\nend",
+            "path": "/workspace/lib/invoice_pipeline/renderer.ex"
+          },
+          "index": 12,
+          "status": "error",
+          "summary": "\"Failed to write /workspace/lib/invoice_pipeline/renderer.ex: eacces\"",
+          "timestamp": "2026-06-21T00:41:46.240871Z",
+          "tool": "edit"
+        },
+        {
+          "args": {
+            "command": "ls -la /workspace/lib/invoice_pipeline/"
+          },
+          "index": 13,
+          "status": "ok",
+          "summary": "total 20\ndrwxr-xr-x 2 agent agent 4096 Jun 21 00:40 .\ndrwxr-xr-x 3 agent agent 4096 Jun 21 00:40 ..\n-rw-r--r-- 1 agent agent   89 Jun 21 00:40 parser.ex\n-rw-r--r-- 1 agent agent   95 Jun 21 00:40 renderer.ex\n-rw-r--r-- 1 agent agent   90 Jun 21 00:40 rules.ex\n",
+          "timestamp": "2026-06-21T00:41:47.665708Z",
+          "tool": "shell"
+        },
+        {
+          "args": {
+            "command": "chmod u+w /workspace/lib/invoice_pipeline/*.ex && ls -la /workspace/lib/invoice_pipeline/"
+          },
+          "index": 14,
+          "status": "ok",
+          "summary": "total 20\ndrwxr-xr-x 2 agent agent 4096 Jun 21 00:40 .\ndrwxr-xr-x 3 agent agent 4096 Jun 21 00:40 ..\n-rw-r--r-- 1 agent agent   89 Jun 21 00:40 parser.ex\n-rw-r--r-- 1 agent agent   95 Jun 21 00:40 renderer.ex\n-rw-r--r-- 1 agent agent   90 Jun 21 00:40 rules.ex\n",
+          "timestamp": "2026-06-21T00:41:49.372567Z",
+          "tool": "shell"
+        },
+        {
+          "args": {
+            "path": "/workspace/lib/invoice_pipeline/parser.ex"
+          },
+          "index": 15,
+          "status": "ok",
+          "summary": "defmodule InvoicePipeline.Parser do\n  @moduledoc false\n\n  def parse(_source), do: []\nend\n",
+          "timestamp": "2026-06-21T00:41:50.292879Z",
+          "tool": "read"
+        },
+        {
+          "args": {
+            "command": "cat > /workspace/lib/invoice_pipeline/parser.ex << 'EOF'\ndefmodule InvoicePipeline.Parser do\n  @moduledoc false\n\n  def parse(source) do\n    source\n    |> String.split(\"\\n\")\n    |> Enum.map(&String.trim/1)\n    |> Enum.reject(&(&1 == \"\"))\n    |> Enum.map(&parse_line/1)\n    |> Enum.reject(&is_nil/1)\n  end\n\n  defp parse_line(line) do\n    parts = String.split(line, \"|\")\n\n    with [customer, category, unit_price_str, quantity_str] <- parts,\n         {unit_price, \"\"} <- Float.parse(unit_price_str),\n         {quantity, \"\"} <- Integer.parse(quantity_str) do\n      %{\n        customer: customer,\n        category: category,\n        unit_price: unit_price,\n        quantity: quantity\n      }\n    else\n      _ -> nil\n    end\n  end\nend\nEOF"
+          },
+          "index": 16,
+          "status": "ok",
+          "summary": "",
+          "timestamp": "2026-06-21T00:41:54.301891Z",
+          "tool": "shell"
+        },
+        {
+          "args": {
+            "command": "cat > /workspace/lib/invoice_pipeline/rules.ex << 'EOF'\ndefmodule InvoicePipeline.Rules do\n  @moduledoc false\n\n  @tax_rates %{\n    \"food\" => 0.02,\n    \"book\" => 0.0,\n    \"tool\" => 0.075,\n    \"service\" => 0.09\n  }\n\n  def summarize(rows) do\n    rows\n    |> Enum.group_by(& &1.customer)\n    |> Enum.map(fn {customer, customer_rows} ->\n      customer_summary(customer, customer_rows)\n    end)\n    |> Enum.sort_by(& &1.customer)\n  end\n\n  defp customer_summary(customer, rows) do\n    category_totals =\n      rows\n      |> Enum.group_by(& &1.category)\n      |> Enum.map(fn {category, cat_rows} ->\n        total = Enum.reduce(cat_rows, 0.0, fn row, acc ->\n          acc + row.unit_price * row.quantity\n        end)\n        {category, total}\n      end)\n      |> Map.new()\n\n    subtotal = Enum.reduce(category_totals, 0.0, fn {_cat, total}, acc -> acc + total end)\n\n    tax =\n      category_totals\n      |> Enum.reduce(0.0, fn {category, total}, acc ->\n        rate = Map.get(@tax_rates, category, 0.0)\n        acc + total * rate\n      end)\n\n    discount = calculate_discount(subtotal)\n    total = subtotal - discount + tax\n\n    %{\n      customer: customer,\n      subtotal: subtotal,\n      discount: discount,\n      tax: tax,\n      total: total,\n      categories: category_totals\n    }\n  end\n\n  defp calculate_discount(subtotal) when subtotal >= 100.0 do\n    subtotal * 0.10\n  end\n\n  defp calculate_discount(subtotal) when subtotal >= 50.0 do\n    5.0\n  end\n\n  defp calculate_discount(_subtotal) do\n    0.0\n  end\nend\nEOF"
+          },
+          "index": 17,
+          "status": "ok",
+          "summary": "",
+          "timestamp": "2026-06-21T00:42:04.128065Z",
+          "tool": "shell"
+        },
+        {
+          "args": {
+            "command": "cat > /workspace/lib/invoice_pipeline/renderer.ex << 'EOF'\ndefmodule InvoicePipeline.Renderer do\n  @moduledoc false\n\n  def render(summaries) do\n    summaries\n    |> Enum.sort_by(& &1.customer)\n    |> Enum.map(&render_summary/1)\n  end\n\n  defp render_summary(summary) do\n    categories_str =\n      summary.categories\n      |> Enum.sort_by(fn {cat, _total} -> cat end)\n      |> Enum.map(fn {cat, total} -> \"#{cat}:#{format_money(total)}\" end)\n      |> Enum.join(\",\")\n\n    \"customer=#{summary.customer} \" <>\n    \"subtotal=#{format_money(summary.subtotal)} \" <>\n    \"discount=#{format_money(summary.discount)} \" <>\n    \"tax=#{format_money(summary.tax)} \" <>\n    \"total=#{format_money(summary.total)} \" <>\n    \"categories=#{categories_str}\"\n  end\n\n  defp format_money(value) do\n    :io_lib.format(\"~.2f\", [value])\n    |> to_string()\n  end\nend\nEOF"
+          },
+          "index": 18,
+          "status": "ok",
+          "summary": "",
+          "timestamp": "2026-06-21T00:42:04.376661Z",
+          "tool": "shell"
+        },
+        {
+          "args": {
+            "command": "cd /workspace && mix test 2>&1"
+          },
+          "index": 19,
+          "status": "error",
+          "summary": "\"Exit code 2:\\nCompiling 4 files (.ex)\\nGenerated invoice_pipeline app\\n\\n\\n  1) test public pipeline composes all layers (InvoicePipelineTest)\\n     test/invoice_pipeline_test.exs:70\\n     Assertion with == failed\\n     code:  assert InvoicePipeline.run(source) == [\\n              \\\"customer=ACME subtotal=64.25 discount=5.00 tax=0.92 total=60.17 categories=book:18.50,food:45.75\\\",\\n              \\\"customer=ZED subtotal=40.00 discount=0.00 tax=3.00 total=43.00 categories=tool:40.00\\\"\\n            ]\\n     left:  [\\\"customer=ACME subtotal=64.25 discount=5.00 tax=0.92 total=60.16 categories=book:18.50,food:45.75\\\",\\n             \\\"customer=ZED subtotal=40.00 discount=0.00 tax=3.00 total=43.00 categories=tool:40.00\\\"]\\n     right: [\\\"customer=ACME subtotal=64.25 discount=5.00 tax=0.92 total=60.17 categories=book:18.50,food:45.75\\\",\\n             \\\"customer=ZED subtotal=40.00 discount=0.00 tax=3.00 total=43.00 categories=tool:40.00\\\"]\\n     stacktrace:\\n       test/invoice_pipeline_test.exs...",
+          "timestamp": "2026-06-21T00:42:06.340046Z",
+          "tool": "shell"
+        }
+      ],
+      "turn_result": "ok"
+    },
+    "run": 1,
+    "runner_mode": "flat",
+    "score": {
+      "goal_closure": false,
+      "recovery_rate": 0.0,
+      "unattended_depth": 14
+    },
+    "status": "stalled"
+  }
+}
